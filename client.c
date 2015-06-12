@@ -79,6 +79,7 @@ int main(int argc, char **argv) {
 				tmr.it_value.tv_usec = cmd.data[1];
 				setitimer(ITIMER_REAL, &tmr, NULL);
 				ioctl(term, KIOCSOUND, (int) (CLK_FREQ / cmd.data[2]));
+				break;
 		
 			default:
 				printf("WARNING: Unknown cmd %d\n", cmd.cmd);
