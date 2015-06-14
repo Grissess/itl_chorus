@@ -53,6 +53,8 @@ except IOError:
 	exit()
 
 notestreams = iv.findall("./streams/stream[@type='ns']")
+print len(notestreams), 'notestreams'
+print len(clients), 'clients'
 
 class NSThread(threading.Thread):
 	def run(self):
@@ -70,7 +72,7 @@ class NSThread(threading.Thread):
 threads = []
 for ns in notestreams:
 	if not clients:
-		print 'WARNING: Out of clients!'
+		print 'WARNING: Out of clients!',
 		break
 	nsq = ns.findall('note')
 	threads.append(NSThread(args=(nsq, clients.pop(0))))
