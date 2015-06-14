@@ -15,7 +15,7 @@ PORT = 13676
 STREAMS = 1
 IDENT = 'TONE'
 if len(sys.argv) > 1:
-    UID = sys.argv[1].rfill(24, '\x00')
+    UID = sys.argv[1].ljust(24, '\x00')
 else:
     UID = '\x00'*24
 
