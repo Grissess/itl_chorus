@@ -5,6 +5,8 @@ import time
 import xml.etree.ElementTree as ET
 import threading
 
+from packet import Packet, CMD
+
 PORT = 13676
 if len(sys.argv) > 2:
 	factor = float(sys.argv[2])
@@ -12,22 +14,6 @@ else:
 	factor = 1
 
 print 'Factor:', factor
-
-class Packet(object):
-	def __init__(self, cmd, *data):
-		self.cmd = cmd
-		self.data = data
-		if len(data) >= 8:
-			raise ValueError('Too many data')
-		self.data = list(self.data) + [0] * (8-len(self.data))
-	def __str__(self):
-		return struct.pack('>L'+('L'*len(self.data)), self.cmd, *self.data)
-
-class CMD:
-	KA = 0 # No important data
-	PING = 1 # Data are echoed exactly
-	QUIT = 2 # No important data
-	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0-255)
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
