@@ -21,6 +21,7 @@ FPB = 64
 
 Z_SAMP = '\x00\x00\x00\x00'
 MAX = 0x7fffffff
+AMP = MAX
 MIN = -0x80000000
 
 def sigalrm(sig, frm):
@@ -36,10 +37,10 @@ def lin_interp(frm, to, cnt):
     return samps
 
 def sine(freq, phase, cnt):
-    global RATE, MAX
+    global RATE, AMP
     samps = [0]*cnt
     for i in xrange(cnt):
-        samps[i] = int(MAX * math.sin(phase + 2 * math.pi * freq * i / RATE))
+        samps[i] = int(AMP * math.sin(phase + 2 * math.pi * freq * i / RATE))
     return samps, phase + 2 * math.pi * freq * cnt / RATE
 
 def to_data(samps):
