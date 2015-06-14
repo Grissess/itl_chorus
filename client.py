@@ -9,9 +9,15 @@ import math
 import struct
 import socket
 
-from packet import Packet, CMD
+from packet import Packet, CMD, stoi
 
 PORT = 13676
+STREAMS = 1
+IDENT = 'TONE'
+if len(sys.argv) > 1:
+    UID = sys.argv[1].rfill(24, '\x00')
+else:
+    UID = '\x00'*24
 
 LAST_SAMP = 0
 FREQ = 0
@@ -63,23 +69,36 @@ pa = pyaudio.PyAudio()
 stream = pa.open(rate=RATE, channels=1, format=pyaudio.paInt32, output=True, frames_per_buffer=FPB, stream_callback=gen_data)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(('', PORT))
 
 signal.signal(signal.SIGALRM, sigalrm)
 
 while True:
-    data, cli = sock.recvfrom(4096)
+    data = ''
+    while not data:
+        try:
+            data, cli = sock.recvfrom(4096)
+        except socket.error:
+            pass
     pkt = Packet.FromStr(data)
     print 'From', cli, 'command', pkt.cmd
-    if pkt.cmd == KA:
+    if pkt.cmd == CMD.KA:
         pass
-    elif pkt.cmd == PING:
+    elif pkt.cmd == CMD.PING:
         sock.sendto(data, cli)
     elif pkt.cmd == CMD.QUIT:
         break
     elif pkt.cmd == CMD.PLAY:
         dur = pkt.data[0]+pkt.data[1]/1000000.0
         FREQ = pkt.data[2]
-        AMP = MAX * (pkt.data[2]/255.0)
+        AMP = MAX * (pkt.data[3]/255.0)
         signal.setitimer(signal.ITIMER_REAL, dur)
+    elif pkt.cmd == CMD.CAPS:
+        data = [0] * 8
+        data[0] = STREAMS
+        data[1] = stoi(IDENT)
+        for i in xrange(len(UID)/4):
+            data[i+2] = stoi(UID[4*i:4*(i+1)])
+        sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
     else:
         print 'Unknown cmd', pkt.cmd

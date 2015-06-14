@@ -5,7 +5,7 @@ import time
 import xml.etree.ElementTree as ET
 import threading
 
-from packet import Packet, CMD
+from packet import Packet, CMD, itos
 
 PORT = 13676
 if len(sys.argv) > 2:
@@ -32,7 +32,13 @@ except socket.timeout:
 
 print 'Clients:'
 for cl in clients:
-	print cl
+	print cl,
+        s.sendto(str(Packet(CMD.CAPS)), cl)
+        data, _ = s.recvfrom(4096)
+        pkt = Packet.FromStr(data)
+        print 'ports', pkt.data[0],
+        print 'type', itos(pkt.data[1]),
+        print 'uid', ''.join([itos(i) for i in pkt.data[2:]]).rstrip('\x00')
 	if sys.argv[1] == '-t':
 		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, 255)), cl)
 		time.sleep(0.25)

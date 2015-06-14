@@ -13,12 +13,16 @@
 #define CLK_FREQ 1193180
 
 int term;
+static int ident = 0x42454550;
 
-enum cmd_t {CMD_KA, CMD_PING, CMD_QUIT, CMD_PLAY};
+enum cmd_t {CMD_KA, CMD_PING, CMD_QUIT, CMD_PLAY, CMD_CAPS};
 
 struct cmd_buffer {
 	int cmd;
-	int data[8];
+	union {
+		int data[8];
+		char string[8*sizeof(int)];
+	};
 };
 
 void sigalrm(int sig) {
@@ -27,10 +31,14 @@ void sigalrm(int sig) {
 
 int main(int argc, char **argv) {
 	struct sockaddr_in addr, remote;
-	int sock, rlen = sizeof(remote), i;
+	int sock, rlen = sizeof(remote), i, len_uid = 0;
 	struct itimerval tmr;
 	struct cmd_buffer cmd;
 	struct sigaction sa;
+
+	if(argc > 1) {
+		len_uid = strlen(argv[1]);
+	}
 
 	if((term = open("/dev/console", O_WRONLY)) < 0) {
 		perror("open");
@@ -79,6 +87,22 @@ int main(int argc, char **argv) {
 				tmr.it_value.tv_usec = cmd.data[1];
 				setitimer(ITIMER_REAL, &tmr, NULL);
 				ioctl(term, KIOCSOUND, (int) (CLK_FREQ / cmd.data[2]));
+				break;
+
+			case CMD_CAPS:
+				cmd.data[0] = 1;
+				cmd.data[1] = ident;
+				for(i = 0; i < 6 * sizeof(int); i++) {
+					if(argc > 1 && i < len_uid) {
+						cmd.string[i+8] = argv[1][i];
+					} else {
+						cmd.string[i+8] = '\0';
+					}
+				}
+				for(i = 0; i < 8; i++) {
+					cmd.data[i] = htonl(cmd.data[i]);
+				}
+				sendto(sock, &cmd, sizeof(cmd), 0, (struct sockaddr *) &remote, rlen);
 				break;
 		
 			default:

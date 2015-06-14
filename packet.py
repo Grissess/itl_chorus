@@ -6,7 +6,7 @@ class Packet(object):
 	def __init__(self, cmd, *data):
 		self.cmd = cmd
 		self.data = data
-		if len(data) >= 8:
+		if len(data) > 8:
 			raise ValueError('Too many data')
 		self.data = list(self.data) + [0] * (8-len(self.data))
         @classmethod
@@ -20,4 +20,11 @@ class CMD:
 	KA = 0 # No important data
 	PING = 1 # Data are echoed exactly
 	QUIT = 2 # No important data
-	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0-255)
+	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0-255), port
+        CAPS = 4 # ports, client type (1), user ident (2-7)
+
+def itos(i):
+    return struct.pack('>L', i)
+
+def stoi(s):
+    return struct.unpack('>L', s)[0]

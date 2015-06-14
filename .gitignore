@@ -3,3 +3,4 @@ client
 *.xml
 *.swp
 *.swo
+*.pyc
