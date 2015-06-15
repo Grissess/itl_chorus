@@ -4,8 +4,34 @@ import struct
 import time
 import xml.etree.ElementTree as ET
 import threading
+import optparse
 
 from packet import Packet, CMD, itos
+
+parser = optparse.OptionParser()
+parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
+parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instruct all clients to quit')
+parser.add_option('-f', '--factor', dest='factor', type='int', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
+parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
+parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
+parser.set_defaults(routes=[])
+options, args = parser.parse_args()
+
+if options.help_routes:
+    print '''Routes are a way of either exclusively or mutually binding certain streams to certain playback clients. They are especially fitting in heterogenous environments where some clients will outperform others in certain pitches or with certain parts.
+
+Routes are fully specified by:
+-The attribute to be routed on (either type "T", or UID "U")
+-The value of that attribute
+-The exclusivity of that route ("+" for inclusive, "-" for exclusive)
+-The stream group to be routed there.
+
+The syntax for that specification resembles the following:
+
+    broadcast.py -r U:bass=+bass -r U:treble1,U:treble2=+treble -r T:BEEP=-beeps,-trk3,-trk5
+
+The specifier consists of a comma-separated list of attribute-colon-value pairs, followed by an equal sign. After this is a comma-separated list of exclusivities paired with the name of a stream group as specified in the file. The above example shows that stream groups "bass", "treble", and "beeps" will be routed to clients with UID "bass", "treble", and TYPE "BEEP" respectively. Additionally, TYPE "BEEP" will receive tracks 4 and 6 (indices 3 and 5) of the MIDI file (presumably split with -T), and that these three groups are exclusively to be routed to TYPE "BEEP" clients only (the broadcaster will drop the stream if no more are available), as opposed to the preference of the bass and treble groups, which may be routed onto other stream clients if they are available.'''
+    exit()
 
 PORT = 13676
 if len(sys.argv) > 2:
@@ -19,6 +45,8 @@ s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 clients = []
+uid_groups = {}
+type_groups = {}
 
 s.sendto(str(Packet(CMD.PING)), ('255.255.255.255', PORT))
 s.settimeout(0.5)
@@ -37,14 +65,25 @@ for cl in clients:
         data, _ = s.recvfrom(4096)
         pkt = Packet.FromStr(data)
         print 'ports', pkt.data[0],
-        print 'type', itos(pkt.data[1]),
-        print 'uid', ''.join([itos(i) for i in pkt.data[2:]]).rstrip('\x00')
-	if sys.argv[1] == '-t':
+        tp = itos(pkt.data[1])
+        print 'type', tp,
+        uid = ''.join([itos(i) for i in pkt.data[2:]]).rstrip('\x00')
+        print 'uid', uid
+        if uid == '':
+            uid = None
+        uid_groups.setdefault(uid, []).append(cl)
+        type_groups.setdefault(tp, []).append(cl)
+	if options.test:
 		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, 255)), cl)
 		time.sleep(0.25)
 		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
-	if sys.argv[1] == '-q':
+	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
+
+if options.test or options.quit:
+    print uid_groups
+    print type_groups
+    exit()
 
 try:
 	iv = ET.parse(sys.argv[1]).getroot()
@@ -53,8 +92,10 @@ except IOError:
 	exit()
 
 notestreams = iv.findall("./streams/stream[@type='ns']")
+groups = set([ns.get('group') for ns in notestreams if 'group' in ns.keys()])
 print len(notestreams), 'notestreams'
 print len(clients), 'clients'
+print len(groups), 'groups'
 
 class NSThread(threading.Thread):
 	def run(self):

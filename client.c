@@ -90,17 +90,14 @@ int main(int argc, char **argv) {
 				break;
 
 			case CMD_CAPS:
-				cmd.data[0] = 1;
-				cmd.data[1] = ident;
+				cmd.data[0] = htonl(1);
+				cmd.data[1] = htonl(ident);
 				for(i = 0; i < 6 * sizeof(int); i++) {
 					if(argc > 1 && i < len_uid) {
 						cmd.string[i+8] = argv[1][i];
 					} else {
 						cmd.string[i+8] = '\0';
 					}
-				}
-				for(i = 0; i < 8; i++) {
-					cmd.data[i] = htonl(cmd.data[i]);
 				}
 				sendto(sock, &cmd, sizeof(cmd), 0, (struct sockaddr *) &remote, rlen);
 				break;
