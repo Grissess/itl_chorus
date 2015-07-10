@@ -11,8 +11,9 @@ from packet import Packet, CMD, itos
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
 parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instruct all clients to quit')
-parser.add_option('-f', '--factor', dest='factor', type='int', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
+parser.add_option('-f', '--factor', dest='factor', type='float', default=1.0, help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
+parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
 parser.set_defaults(routes=[])
 options, args = parser.parse_args()
@@ -34,10 +35,7 @@ The specifier consists of a comma-separated list of attribute-colon-value pairs,
     exit()
 
 PORT = 13676
-if len(sys.argv) > 2:
-	factor = float(sys.argv[2])
-else:
-	factor = 1
+factor = options.factor
 
 print 'Factor:', factor
 
@@ -86,7 +84,7 @@ if options.test or options.quit:
     exit()
 
 try:
-	iv = ET.parse(sys.argv[1]).getroot()
+	iv = ET.parse(args[0]).getroot()
 except IOError:
 	print 'Bad file'
 	exit()
@@ -98,6 +96,10 @@ print len(clients), 'clients'
 print len(groups), 'groups'
 
 class NSThread(threading.Thread):
+        def wait_for(self, t):
+            if t <= 0:
+                return
+            time.sleep(t)
 	def run(self):
 		nsq, cl = self._Thread__args
 		for note in nsq:
@@ -106,9 +108,11 @@ class NSThread(threading.Thread):
 			vel = int(note.get('vel'))
 			dur = factor*float(note.get('dur'))
 			while time.time() - BASETIME < factor*ttime:
-				time.sleep(factor*ttime - (time.time() - BASETIME))
+				self.wait_for(factor*ttime - (time.time() - BASETIME))
 			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel*2)), cl)
-			time.sleep(dur)
+                        print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
+			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
+                print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
 threads = []
 for ns in notestreams:

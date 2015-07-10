@@ -9,12 +9,14 @@ import math
 import struct
 import socket
 import optparse
+import array
 
 from packet import Packet, CMD, stoi
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test sequence (440,<rest>,880,440), then exit')
 parser.add_option('-g', '--generator', dest='generator', default='math.sin', help='Set the generator (to a Python expression)')
+parser.add_option('--generators', dest='generators', action='store_true', help='Show the list of generators, then exit')
 parser.add_option('-u', '--uid', dest='uid', default='', help='Set the UID (identifier) of this client in the network')
 parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='Set the port to listen on')
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
@@ -42,6 +44,18 @@ def lin_interp(frm, to, p):
 
 # Generator functions--should be cyclic within [0, 2*math.pi) and return [-1, 1]
 
+GENERATORS = [{'name': 'math.sin', 'args': None, 'desc': 'Sine function'},
+        {'name':'math.cos', 'args': None, 'desc': 'Cosine function'}]
+
+def generator(desc=None, args=None):
+    def inner(f, desc=desc, args=args):
+        if desc is None:
+            desc = f.__doc__
+        GENERATORS.append({'name': f.__name__, 'desc': desc, 'args': args})
+        return f
+    return inner
+
+@generator('Simple triangle wave (peaks/troughs at pi/2, 3pi/2)')
 def tri_wave(theta):
     if theta < math.pi/2:
         return lin_interp(0, 1, theta/(math.pi/2))
@@ -50,11 +64,86 @@ def tri_wave(theta):
     else:
         return lin_interp(-1, 0, (theta-3*math.pi/2)/(math.pi/2))
 
+@generator('Simple square wave (piecewise 1 at x<pi, 0 else)')
 def square_wave(theta):
     if theta < math.pi:
         return 1
     else:
         return -1
+
+@generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>]]]])')
+class file_samp(object):
+    LINEAR = 0
+    NEAREST = 1
+    TYPES = {8: 'B', 16: 'H', 32: 'L'}
+    def __init__(self, fname, bits=8, signed=True, samp=LINEAR, swab=False):
+        tp = self.TYPES[bits]
+        if signed:
+            tp = tp.lower()
+        self.max = float((2 << bits) - 1)
+        self.buffer = array.array(tp)
+        self.buffer.fromstring(open(fname, 'rb').read())
+        if swab:
+            self.buffer.byteswap()
+        self.samp = samp
+    def __call__(self, theta):
+        norm = theta / (2*math.pi)
+        if self.samp == self.LINEAR:
+            v = norm*len(self.buffer)
+            l = int(math.floor(v))
+            h = int(math.ceil(v))
+            if l == h:
+                return self.buffer[l]/self.max
+            if h >= len(self.buffer):
+                h = 0
+            return lin_interp(self.buffer[l], self.buffer[h], v-l)/self.max
+        elif self.samp == self.NEAREST:
+            return self.buffer[int(math.ceil(norm*len(self.buffer) - 0.5))]/self.max
+
+@generator('Harmonics generator (adds overtones at f, 2f, 3f, 4f, etc.)', '(<generator>, <amplitude of f>, <amp 2f>, <amp 3f>, ...)')
+class harmonic(object):
+    def __init__(self, gen, *spectrum):
+        self.gen = gen
+        self.spectrum = spectrum
+    def __call__(self, theta):
+        return max(-1, min(1, sum([amp*self.gen((i+1)*theta % (2*math.pi)) for i, amp in enumerate(self.spectrum)])))
+
+@generator('Mix generator', '(<generator>[, <amp>], [<generator>[, <amp>], [...]])')
+class mixer(object):
+    def __init__(self, *specs):
+        self.pairs = []
+        i = 0
+        while i < len(specs):
+            if i+1 < len(specs) and isinstance(specs[i+1], (float, int)):
+                pair = (specs[i], specs[i+1])
+                i += 2
+            else:
+                pair = (specs[i], None)
+                i += 1
+            self.pairs.append(pair)
+        tamp = 1 - min(1, sum([amp for gen, amp in self.pairs if amp is not None]))
+        parts = float(len([None for gen, amp in self.pairs if amp is None]))
+        for idx, pair in enumerate(self.pairs):
+            if pair[1] is None:
+                self.pairs[idx] = (pair[0], tamp / parts)
+    def __call__(self, theta):
+        return max(-1, min(1, sum([amp*gen(theta) for gen, amp in self.pairs])))
+
+@generator('Phase offset generator (in radians; use math.pi)', '(<generator>, <offset>)')
+class phase_off(object):
+    def __init__(self, gen, offset):
+        self.gen = gen
+        self.offset = offset
+    def __call__(self, theta):
+        return self.gen((theta + self.offset) % (2*math.pi))
+
+if options.generators:
+    for item in GENERATORS:
+        print item['name'],
+        if item['args'] is not None:
+            print item['args'],
+        print '--', item['desc']
+    exit()
 
 #generator = math.sin
 #generator = tri_wave

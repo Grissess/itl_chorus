@@ -27,6 +27,7 @@ parser.add_option('-c', '--preserve-channels', dest='chanskeep', action='store_t
 parser.add_option('-T', '--track-split', dest='tracks', action='append_const', const=TRACKS, help='Ensure all tracks are on non-mutual streams')
 parser.add_option('-t', '--track', dest='tracks', action='append', help='Reserve an exclusive set of streams for certain conditions (try --help-conds)')
 parser.add_option('--help-conds', dest='help_conds', action='store_true', help='Print help on filter conditions for streams')
+parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
 parser.set_defaults(tracks=[])
 options, args = parser.parse_args()
 
@@ -65,8 +66,15 @@ if not args:
     parser.print_usage()
     exit()
 
+if options.fuckit:
+    import fuckit
+    midi.read_midifile = fuckit(midi.read_midifile)
+
 for fname in args:
     pat = midi.read_midifile(fname)
+    if pat is None:
+        print fname, ': Too fucked to continue'
+        continue
     iv = ET.Element('iv')
     iv.set('version', '1')
     iv.set('src', os.path.basename(fname))
@@ -78,12 +86,17 @@ for fname in args:
         pat = midi.Pattern(resolution=old_pat.resolution)
         for track in old_pat:
             chan_map = {}
+            last_abstick = {}
+            absticks = 0
             for ev in track:
+                absticks += ev.tick
                 if isinstance(ev, midi.Event):
+                    tick = absticks - last_abstick.get(ev.channel, 0)
+                    last_abstick[ev.channel] = absticks
                     if options.chanskeep:
-                        newev = ev.copy()
+                        newev = ev.copy(tick = tick)
                     else:
-                        newev = ev.copy(channel=1)
+                        newev = ev.copy(channel=1, tick = tick)
                     chan_map.setdefault(ev.channel, midi.Track()).append(newev)
                 else: # MetaEvent
                     for trk in chan_map.itervalues():
@@ -122,7 +135,7 @@ for fname in args:
             else:
                 if isinstance(ev, midi.NoteOnEvent) and ev.velocity == 0:
                     ev.__class__ = midi.NoteOffEvent #XXX Oww
-                bpm = filter(lambda pair: pair[0] <= absticks, bpm_at.items())[-1][1]
+                bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at.items(), key=lambda pair: pair[0]))[-1][1]
                 abstime += (60.0 * ev.tick) / (bpm * pat.resolution)
                 absticks += ev.tick
                 events.append(MergeEvent(ev, tidx, abstime))
@@ -231,6 +244,7 @@ for fname in args:
         print ('<anonymous>' if group.name is None else group.name), '<=', group.filter, '(', len(group.streams), 'streams)'
 
     print 'Generated %d streams in %d groups'%(sum(map(lambda x: len(x.streams), notegroups)), len(notegroups))
+    print 'Playtime:', lastabstime, 'seconds'
 
 ##### Write to XML and exit #####
 
