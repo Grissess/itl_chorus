@@ -10,6 +10,7 @@ from packet import Packet, CMD, itos
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
+parser.add_option('-T', '--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
 parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instruct all clients to quit')
 parser.add_option('-f', '--factor', dest='factor', type='float', default=1.0, help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
@@ -73,10 +74,16 @@ for cl in clients:
         type_groups.setdefault(tp, []).append(cl)
 	if options.test:
 		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, 255)), cl)
-		time.sleep(0.25)
-		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
+                if not options.sync_test:
+                    time.sleep(0.25)
+                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
+
+if options.test and options.sync_test:
+    time.sleep(0.25)
+    for cl in clients:
+        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
 
 if options.test or options.quit:
     print uid_groups
