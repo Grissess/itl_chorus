@@ -102,6 +102,84 @@ print len(notestreams), 'notestreams'
 print len(clients), 'clients'
 print len(groups), 'groups'
 
+class Route(object):
+    def __init__(self, fattr, fvalue, group, excl=False):
+        if fattr == 'U':
+            self.map = uid_groups
+        elif fattr == 'T':
+            self.map = type_groups
+        else:
+            raise ValueError('Not a valid attribute specifier: %r'%(fattr,))
+        self.value = fvalue
+        if group not in groups:
+            raise ValueError('Not a present group: %r'%(group,))
+        self.group = group
+        self.excl = excl
+    @classmethod
+    def Parse(cls, s):
+        fspecs, _, grpspecs = map(lambda x: x.strip(), s.partition('='))
+        fpairs = []
+        ret = []
+        for fspec in [i.strip() for i in fspecs.split(',')]:
+            fattr, _, fvalue = map(lambda x: x.strip(), fspec.partition(':'))
+            fpairs.append((fattr, fvalue))
+        for part in [i.strip() for i in grpspecs.split(',')]:
+            for fattr, fvalue in fpairs:
+                if part[0] == '+':
+                    ret.append(Route(fattr, fvalue, part[1:], False))
+                elif part[0] == '-':
+                    ret.append(Route(fattr, fvalue, part[1:], True))
+                else:
+                    raise ValueError('Not an exclusivity: %r'%(part[0],))
+        return ret
+    def __repr__(self):
+        return '<Route of %r to %s:%s>'%(self.group, ('U' if self.map is uid_groups else 'T'), self.value)
+
+class RouteSet(object):
+    def __init__(self, clis=None):
+        if clis is None:
+            clis = clients
+        self.clients = clis
+        self.routes = []
+    def Route(self, stream):
+        grp = stream.get('group')
+        if options.verbose:
+            print 'Routing', grp, '...'
+        excl = False
+        for route in self.routes:
+            if route.group == grp:
+                if options.verbose:
+                    print 'Matches route', route
+                excl = excl or route.excl
+                matches = filter(lambda x, route=route: route.Apply(x), self.clients)
+                if matches:
+                    if options.verbose:
+                        print 'Using client', matches[0]
+                    self.clients.remove(matches[0])
+                    return matches[0]
+                print 'No matches, moving on...'
+        if excl:
+            if options.verbose:
+                print 'Exclusively routed, no route matched.'
+            return None
+        if not self.clients:
+            if options.verbose:
+                print 'Out of clients, no route matched.'
+            return None
+        cli = self.clients.pop(0)
+        if options.verbose:
+            print 'Default route to', cli
+        return cli
+
+routeset = RouteSet()
+for rspec in options.routes:
+    routeset.routes.extend(Route.Parse(rspec))
+
+if options.verbose:
+    print 'All routes:'
+    for route in routeset.routes:
+        print route
+
 class NSThread(threading.Thread):
         def wait_for(self, t):
             if t <= 0:
@@ -117,17 +195,18 @@ class NSThread(threading.Thread):
 			while time.time() - BASETIME < factor*ttime:
 				self.wait_for(factor*ttime - (time.time() - BASETIME))
 			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel*2)), cl)
-                        print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
+                        if options.verbose:
+                            print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-                print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
+                if options.verbose:
+                    print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
 threads = []
 for ns in notestreams:
-	if not clients:
-		print 'WARNING: Out of clients!',
-		break
-	nsq = ns.findall('note')
-	threads.append(NSThread(args=(nsq, clients.pop(0))))
+    cli = routeset.Route(ns)
+    if cli:
+        nsq = ns.findall('note')
+        threads.append(NSThread(args=(nsq, clients.pop(0))))
 
 BASETIME = time.time()
 for thr in threads:
