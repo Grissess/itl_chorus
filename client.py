@@ -74,7 +74,7 @@ def square_wave(theta):
 
 @generator('Random (noise) generator')
 def noise(theta):
-    return math.random() * 2 - 1
+    return random.random() * 2 - 1
 
 @generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>]]]])')
 class file_samp(object):
