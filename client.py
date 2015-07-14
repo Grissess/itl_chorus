@@ -10,6 +10,7 @@ import struct
 import socket
 import optparse
 import array
+import random
 
 from packet import Packet, CMD, stoi
 
@@ -70,6 +71,10 @@ def square_wave(theta):
         return 1
     else:
         return -1
+
+@generator('Random (noise) generator')
+def noise(theta):
+    return math.random() * 2 - 1
 
 @generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>]]]])')
 class file_samp(object):
