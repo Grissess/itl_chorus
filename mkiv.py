@@ -27,6 +27,7 @@ parser.add_option('-c', '--preserve-channels', dest='chanskeep', action='store_t
 parser.add_option('-T', '--track-split', dest='tracks', action='append_const', const=TRACKS, help='Ensure all tracks are on non-mutual streams')
 parser.add_option('-t', '--track', dest='tracks', action='append', help='Reserve an exclusive set of streams for certain conditions (try --help-conds)')
 parser.add_option('--help-conds', dest='help_conds', action='store_true', help='Print help on filter conditions for streams')
+parser.add_option('-P', '--no-percussion', dest='no_perc', action='store_true', help='Don\'t try to filter percussion events out')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
 parser.set_defaults(tracks=[])
 options, args = parser.parse_args()
@@ -191,6 +192,9 @@ for fname in args:
 
     notegroups = []
     auxstream = []
+
+    if not options.no_perc:
+        notegroups.append(NSGroup(filter = lambda mev: mev.ev.channel == 10, name='perc'))
 
     for spec in options.tracks:
         if spec is TRACKS:
