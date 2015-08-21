@@ -143,6 +143,8 @@ if options.live or options.list_live:
         ev = S.event_input(seq.client)
         event = None
         if ev:
+            if options.verbose:
+                print 'SEQ:', ev
             if ev < 0:
                 seq._error(ev)
             if ev.type == S.SND_SEQ_EVENT_NOTEON:
@@ -160,7 +162,7 @@ if options.live or options.list_live:
                 continue
         if event is not None:
             if isinstance(event, midi.NoteOnEvent) and event.velocity == 0:
-                ev.__class__ = midi.NoteOffEvent
+                event.__class__ = midi.NoteOffEvent
             if options.verbose:
                 print 'EVENT:', event
             if isinstance(event, midi.NoteOnEvent):
