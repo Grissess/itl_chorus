@@ -114,9 +114,3 @@ class VSumMixer(Voice):
         self.voices = list(voices)
     def __call__(self, theta):
         return norm_amp(sum([i(theta) for i in self.voices]))
-
-class object(object):
-    def __init__(self):
-        this_obj = object()
-
-foo = object()
