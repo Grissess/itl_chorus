@@ -11,8 +11,7 @@ from packet import Packet, CMD, itos
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
-parser.add_option('-T', '--transpose', dest='transpose', type='int', help='Transpose by a set amount of semitones (positive or negative)')
-parser.add_option('--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
+parser.add_option('-T', '--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
 parser.add_option('-R', '--random', dest='random', type='float', help='Generate random notes at approximately this period')
 parser.add_option('--rand-low', dest='rand_low', type='int', help='Low frequency to randomly sample')
 parser.add_option('--rand-high', dest='rand_high', type='int', help='High frequency to randomly sample')
@@ -24,13 +23,13 @@ parser.add_option('-P', '--play-async', dest='play_async', action='store_true', 
 parser.add_option('-D', '--duration', dest='duration', type='float', help='How long to play this note for')
 parser.add_option('-V', '--volume', dest='volume', type='int', help='How loud to play this note (0-255)')
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
-parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
+parser.add_option('-k', '--keyboard', dest='keyboard', action='store_true', help='Play using the keyboard')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0)
+parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[])
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -71,8 +70,6 @@ try:
 except socket.timeout:
 	pass
 
-print len(clients), 'detected clients'
-
 print 'Clients:'
 for cl in clients:
 	print cl,
@@ -89,10 +86,10 @@ for cl in clients:
         uid_groups.setdefault(uid, []).append(cl)
         type_groups.setdefault(tp, []).append(cl)
 	if options.test:
-		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, options.volume)), cl)
+		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, 255)), cl)
                 if not options.sync_test:
                     time.sleep(0.25)
-                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, options.volume)), cl)
+                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
@@ -135,7 +132,7 @@ if options.live or options.list_live:
         exit()
     seq = sequencer.SequencerRead(sequencer_resolution=120)
     client_set = set(clients)
-    active_set = {} # note (pitch) -> [client]
+    active_set = {} # note (pitch) -> client
     deferred_set = set() # pitches held due to sustain
     sustain_status = False
     client, _, port = options.live.partition(',')
@@ -157,7 +154,7 @@ if options.live or options.list_live:
             elif ev.type == S.SND_SEQ_EVENT_CONTROLLER:
                 event = midi.ControlChangeEvent(channel = ev.data.control.channel, control = ev.data.control.param, value = ev.data.control.value)
             elif ev.type == S.SND_SEQ_EVENT_PGMCHANGE:
-                event = midi.ProgramChangeEvent(channel = ev.data.control.channel, value = ev.data.control.value)
+                event = midi.ProgramChangeEvent(channel = ev.data.control.channel, pitch = ev.data.control.value)
             elif ev.type == S.SND_SEQ_EVENT_PITCHBEND:
                 event = midi.PitchWheelEvent(channel = ev.data.control.channel, pitch = ev.data.control.value)
             elif options.verbose:
@@ -172,39 +169,209 @@ if options.live or options.list_live:
                 if event.pitch in active_set:
                     if sustain_status:
                         deferred_set.discard(event.pitch)
-                inactive_set = client_set - set(sum(active_set.values(), []))
+                    else:
+                        print 'WARNING: Note already activated: %r'%(event.pitch,),
+                    continue
+                inactive_set = client_set - set(active_set.values())
                 if not inactive_set:
                     print 'WARNING: Out of clients to do note %r; dropped'%(event.pitch,)
                     continue
-                cli = sorted(inactive_set)[0]
+                cli = random.choice(list(inactive_set))
                 s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), 2*event.velocity)), cli)
-                active_set.setdefault(event.pitch, []).append(cli)
-                if options.verbose:
-                    print 'LIVE:', event.pitch, '+ =>', active_set[event.pitch]
+                active_set[event.pitch] = cli
             elif isinstance(event, midi.NoteOffEvent):
-                if event.pitch not in active_set or not active_set[event.pitch]:
+                if event.pitch not in active_set:
                     print 'WARNING: Deactivating inactive note %r'%(event.pitch,)
                     continue
                 if sustain_status:
                     deferred_set.add(event.pitch)
                     continue
-                cli = active_set[event.pitch].pop()
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
-                if options.verbose:
-                    print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[event.pitch])
+                del active_set[event.pitch]
             elif isinstance(event, midi.ControlChangeEvent):
                 if event.control == 64:
                     sustain_status = (event.value >= 64)
                     if not sustain_status:
                         for pitch in deferred_set:
-                            if pitch not in active_set or not active_set[pitch]:
+                            if pitch not in active_set:
                                 print 'WARNING: Attempted deferred removal of inactive note %r'%(pitch,)
                                 continue
-                            for cli in active_set[pitch]:
-                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                            s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[pitch])
                             del active_set[pitch]
                         deferred_set.clear()
 
+
+
+
+
+if options.keyboard:
+    import pygame
+    import midi
+    from pygame import *
+    pygame.init()
+    size = width , height = 640,360 
+    screen = pygame.display.set_mode(size)
+    picture = pygame.image.load("aaaa.png")
+    surface = pygame.display.get_surface()
+    pitch = 60
+    velocity = 127
+    client_set = set(clients)
+    active_set = {} # note (pitch) -> client
+    sustain_status = False
+    sharp = 0
+    while True:
+         surface.blit(picture,(0,0))
+         pygame.display.update()
+         for event in pygame.event.get():
+              if event.type == pygame.QUIT:
+                 pygame.quit()
+                 sys.exit()
+              elif event.type == pygame.KEYDOWN:
+                 if event.key == K_a:
+                         pitch = 60
+                 if event.key == K_s:
+                         pitch = 62
+                 if event.key == K_d:
+                         pitch = 64
+                 if event.key == K_f:
+                         pitch = 65
+                 if event.key == K_g:
+                         pitch = 67
+                 if event.key == K_h:
+                         pitch = 69
+                 if event.key == K_j:
+                         pitch = 71
+                 if event.key == K_k:
+                         pitch = 72
+                 if event.key == K_l:
+                         pitch = 74
+                 if event.key == K_z:
+                         pitch = 48
+                 if event.key == K_x:
+                         pitch = 50
+                 if event.key == K_c:
+                         pitch = 52
+                 if event.key == K_v:
+                         pitch = 53
+                 if event.key == K_b:
+                         pitch = 55
+                 if event.key == K_n:
+                         pitch = 57
+                 if event.key == K_m:
+                         pitch = 59
+                 if event.key == K_q:
+                         pitch = 76
+                 if event.key == K_w:
+                         pitch = 77
+                 if event.key == K_e:
+                         pitch = 79
+                 if event.key == K_r:
+                         pitch = 81
+                 if event.key == K_t:
+                         pitch = 83
+                 if event.key == K_y:
+                         pitch = 84
+                 if event.key == K_u:
+                         pitch = 86
+                 if event.key == K_i:
+                         pitch = 88
+                 if event.key == K_o:
+                         pitch = 89
+                 if event.key == K_p:
+                         pitch = 91
+                 if event.key == K_LSHIFT:
+                         sharp = 1
+                         continue
+                 pitch = pitch + sharp
+                 mevent = midi.NoteOnEvent(channel = 0, pitch = pitch, velocity = velocity)
+                 if mevent.pitch in active_set:
+                    if sustain_status:
+                        deferred_set.discard(mevent.pitch)
+                    else:
+                        print 'WARNING: Note already activated: %r \n'%(mevent.pitch,),
+                    continue
+                 inactive_set = client_set - set(active_set.values())
+                 if not inactive_set:
+                    print 'WARNING: Out of clients to do note %r; dropped'%(mevent.pitch,)
+                    continue
+                 cli = random.choice(list(inactive_set))
+                 s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((mevent.pitch-69)/12.0)), 2*mevent.velocity)), cli)
+                 active_set[mevent.pitch] = cli
+              elif event.type == pygame.KEYUP:
+                 if event.key == K_a:
+                         pitch = 60
+                 if event.key == K_s:
+                         pitch = 62
+                 if event.key == K_d:
+                         pitch = 64
+                 if event.key == K_f:
+                         pitch = 65
+                 if event.key == K_g:
+                         pitch = 67
+                 if event.key == K_h:
+                         pitch = 69
+                 if event.key == K_j:
+                         pitch = 71
+                 if event.key == K_k:
+                         pitch = 72
+                 if event.key == K_l:
+                         pitch = 74
+                 if event.key == K_z:
+                         pitch = 48
+                 if event.key == K_x:
+                         pitch = 50
+                 if event.key == K_c:
+                         pitch = 52
+                 if event.key == K_v:
+                         pitch = 53
+                 if event.key == K_b:
+                         pitch = 55
+                 if event.key == K_n:
+                         pitch = 57
+                 if event.key == K_m:
+                         pitch = 59
+                 if event.key == K_q:
+                         pitch = 76
+                 if event.key == K_w:
+                         pitch = 77
+                 if event.key == K_e:
+                         pitch = 79
+                 if event.key == K_r:
+                         pitch = 81
+                 if event.key == K_t:
+                         pitch = 83
+                 if event.key == K_y:
+                         pitch = 84
+                 if event.key == K_u:
+                         pitch = 86
+                 if event.key == K_i:
+                         pitch = 88
+                 if event.key == K_o:
+                         pitch = 89
+                 if event.key == K_p:
+                         pitch = 91
+                 if event.key == K_LSHIFT:
+                         sharp = 0
+                         continue
+                 mevent = midi.NoteOffEvent(channel = 0, pitch = pitch, velocity = velocity)
+                 if mevent.pitch not in active_set:
+                    print 'WARNING: Deactivating inactive note %r'%(mevent.pitch,)
+                    continue
+                 if sustain_status:
+                    deferred_set.add(mevent.pitch)
+                    continue
+		 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[mevent.pitch])
+                 del active_set[mevent.pitch]
+                 mevent = midi.NoteOffEvent(channel = 0, pitch = pitch + 1, velocity = velocity)
+                 if mevent.pitch not in active_set:
+                    print 'WARNING: Deactivating inactive note %r'%(mevent.pitch,)
+                    continue
+                 if sustain_status:
+                    deferred_set.add(mevent.pitch)
+                    continue
+		 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[mevent.pitch])
+                 del active_set[mevent.pitch]
+                 
 for fname in args:
     try:
         iv = ET.parse(fname).getroot()
@@ -320,39 +487,11 @@ for fname in args:
         for route in routeset.routes:
             print route
 
-<<<<<<< b1e54746e876a4ed485e2ed1bbc1d8b302e908ab
-class NSThread(threading.Thread):
-        def drop_missed(self):
-            nsq, cl = self._Thread__args
-            cnt = 0
-            while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
-                nsq.pop(0)
-                cnt += 1
-            if options.verbose:
-                print self, 'dropped', cnt, 'notes due to miss'
-            self._Thread__args = (nsq, cl)
-=======
     class NSThread(threading.Thread):
->>>>>>> Partial commit (last from cosi02!)
         def wait_for(self, t):
             if t <= 0:
                 return
             time.sleep(t)
-<<<<<<< b1e54746e876a4ed485e2ed1bbc1d8b302e908ab
-	def run(self):
-		nsq, cl = self._Thread__args
-		for note in nsq:
-			ttime = float(note.get('time'))
-			pitch = int(note.get('pitch')) + options.transpose
-			vel = int(note.get('vel'))
-			dur = factor*float(note.get('dur'))
-			while time.time() - BASETIME < factor*ttime:
-				self.wait_for(factor*ttime - (time.time() - BASETIME))
-			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel * 2 * (options.volume / 255.0))), cl)
-                        if options.verbose:
-                            print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-=======
         def run(self):
             nsq, cl = self._Thread__args
             for note in nsq:
@@ -363,7 +502,6 @@ class NSThread(threading.Thread):
                 while time.time() - BASETIME < factor*ttime:
                     self.wait_for(factor*ttime - (time.time() - BASETIME))
                 s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel*2)), cl)
->>>>>>> Partial commit (last from cosi02!)
                 if options.verbose:
                     print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
                 self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
@@ -388,15 +526,4 @@ class NSThread(threading.Thread):
     for thr in threads:
         thr.join()
 
-<<<<<<< b1e54746e876a4ed485e2ed1bbc1d8b302e908ab
-BASETIME = time.time() - (options.seek*factor)
-if options.seek > 0:
-    for thr in threads:
-        thr.drop_missed()
-for thr in threads:
-	thr.start()
-for thr in threads:
-	thr.join()
-=======
     print fname, ': Done!'
->>>>>>> Partial commit (last from cosi02!)
