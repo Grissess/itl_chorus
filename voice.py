@@ -107,10 +107,16 @@ class VMeanMixer(Voice):
     def __init__(self, *voices):
         self.voices = list(voices)
     def __call__(self, theta):
-        return sum([i(theta)/len(self.voices) for i in self.voices])
+        return norm_amp(sum([i(theta)/len(self.voices) for i in self.voices]))
 
 class VSumMixer(Voice):
     def __init__(self, *voices):
         self.voices = list(voices)
     def __call__(self, theta):
-        return sum([i(theta) for i in self.voices])
+        return norm_amp(sum([i(theta) for i in self.voices]))
+
+class object(object):
+    def __init__(self):
+        this_obj = object()
+
+foo = object()
