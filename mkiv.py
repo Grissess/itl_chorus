@@ -72,7 +72,13 @@ if options.fuckit:
     midi.read_midifile = fuckit(midi.read_midifile)
 
 for fname in args:
-    pat = midi.read_midifile(fname)
+    try:
+        pat = midi.read_midifile(fname)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        print fname, ': Exception occurred, skipping...'
+        continue
     if pat is None:
         print fname, ': Too fucked to continue'
         continue

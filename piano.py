@@ -27,6 +27,7 @@ parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale t
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
+parser.add_option('-k', '--keyboard', dest='keyboard', action='store_true', help='Play using the keyboard')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
 parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[])
 options, args = parser.parse_args()
@@ -199,6 +200,178 @@ if options.live or options.list_live:
                             del active_set[pitch]
                         deferred_set.clear()
 
+
+
+
+
+if options.keyboard:
+    import pygame
+    import midi
+    from pygame import *
+    pygame.init()
+    size = width , height = 640,360 
+    screen = pygame.display.set_mode(size)
+    picture = pygame.image.load("aaaa.png")
+    surface = pygame.display.get_surface()
+    pitch = 60
+    velocity = 127
+    client_set = set(clients)
+    active_set = {} # note (pitch) -> client
+    sustain_status = False
+    sharp = 0
+    while True:
+         surface.blit(picture,(0,0))
+         pygame.display.update()
+         for event in pygame.event.get():
+              if event.type == pygame.QUIT:
+                 pygame.quit()
+                 sys.exit()
+              elif event.type == pygame.KEYDOWN:
+                 if event.key == K_a:
+                         pitch = 60
+                 if event.key == K_s:
+                         pitch = 62
+                 if event.key == K_d:
+                         pitch = 64
+                 if event.key == K_f:
+                         pitch = 65
+                 if event.key == K_g:
+                         pitch = 67
+                 if event.key == K_h:
+                         pitch = 69
+                 if event.key == K_j:
+                         pitch = 71
+                 if event.key == K_k:
+                         pitch = 72
+                 if event.key == K_l:
+                         pitch = 74
+                 if event.key == K_z:
+                         pitch = 48
+                 if event.key == K_x:
+                         pitch = 50
+                 if event.key == K_c:
+                         pitch = 52
+                 if event.key == K_v:
+                         pitch = 53
+                 if event.key == K_b:
+                         pitch = 55
+                 if event.key == K_n:
+                         pitch = 57
+                 if event.key == K_m:
+                         pitch = 59
+                 if event.key == K_q:
+                         pitch = 76
+                 if event.key == K_w:
+                         pitch = 77
+                 if event.key == K_e:
+                         pitch = 79
+                 if event.key == K_r:
+                         pitch = 81
+                 if event.key == K_t:
+                         pitch = 83
+                 if event.key == K_y:
+                         pitch = 84
+                 if event.key == K_u:
+                         pitch = 86
+                 if event.key == K_i:
+                         pitch = 88
+                 if event.key == K_o:
+                         pitch = 89
+                 if event.key == K_p:
+                         pitch = 91
+                 if event.key == K_LSHIFT:
+                         sharp = 1
+                         continue
+                 pitch = pitch + sharp
+                 mevent = midi.NoteOnEvent(channel = 0, pitch = pitch, velocity = velocity)
+                 if mevent.pitch in active_set:
+                    if sustain_status:
+                        deferred_set.discard(mevent.pitch)
+                    else:
+                        print 'WARNING: Note already activated: %r \n'%(mevent.pitch,),
+                    continue
+                 inactive_set = client_set - set(active_set.values())
+                 if not inactive_set:
+                    print 'WARNING: Out of clients to do note %r; dropped'%(mevent.pitch,)
+                    continue
+                 cli = random.choice(list(inactive_set))
+                 s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((mevent.pitch-69)/12.0)), 2*mevent.velocity)), cli)
+                 active_set[mevent.pitch] = cli
+              elif event.type == pygame.KEYUP:
+                 if event.key == K_a:
+                         pitch = 60
+                 if event.key == K_s:
+                         pitch = 62
+                 if event.key == K_d:
+                         pitch = 64
+                 if event.key == K_f:
+                         pitch = 65
+                 if event.key == K_g:
+                         pitch = 67
+                 if event.key == K_h:
+                         pitch = 69
+                 if event.key == K_j:
+                         pitch = 71
+                 if event.key == K_k:
+                         pitch = 72
+                 if event.key == K_l:
+                         pitch = 74
+                 if event.key == K_z:
+                         pitch = 48
+                 if event.key == K_x:
+                         pitch = 50
+                 if event.key == K_c:
+                         pitch = 52
+                 if event.key == K_v:
+                         pitch = 53
+                 if event.key == K_b:
+                         pitch = 55
+                 if event.key == K_n:
+                         pitch = 57
+                 if event.key == K_m:
+                         pitch = 59
+                 if event.key == K_q:
+                         pitch = 76
+                 if event.key == K_w:
+                         pitch = 77
+                 if event.key == K_e:
+                         pitch = 79
+                 if event.key == K_r:
+                         pitch = 81
+                 if event.key == K_t:
+                         pitch = 83
+                 if event.key == K_y:
+                         pitch = 84
+                 if event.key == K_u:
+                         pitch = 86
+                 if event.key == K_i:
+                         pitch = 88
+                 if event.key == K_o:
+                         pitch = 89
+                 if event.key == K_p:
+                         pitch = 91
+                 if event.key == K_LSHIFT:
+                         sharp = 0
+                         continue
+                 mevent = midi.NoteOffEvent(channel = 0, pitch = pitch, velocity = velocity)
+                 if mevent.pitch not in active_set:
+                    print 'WARNING: Deactivating inactive note %r'%(mevent.pitch,)
+                    continue
+                 if sustain_status:
+                    deferred_set.add(mevent.pitch)
+                    continue
+		 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[mevent.pitch])
+                 del active_set[mevent.pitch]
+                 mevent = midi.NoteOffEvent(channel = 0, pitch = pitch + 1, velocity = velocity)
+                 if mevent.pitch not in active_set:
+                    print 'WARNING: Deactivating inactive note %r'%(mevent.pitch,)
+                    continue
+                 if sustain_status:
+                    deferred_set.add(mevent.pitch)
+                    continue
+		 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[mevent.pitch])
+                 del active_set[mevent.pitch]
+                 
 for fname in args:
     try:
         iv = ET.parse(fname).getroot()
