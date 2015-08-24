@@ -211,8 +211,8 @@ if options.keyboard:
     pygame.init()
     size = width , height = 640,360 
     screen = pygame.display.set_mode(size)
-    #picture = pygame.image.load("aaaa.png")
-    #surface = pygame.display.get_surface()
+    picture = pygame.image.load("aaaa.png")
+    surface = pygame.display.get_surface()
     pitch = 60
     velocity = 127
     client_set = set(clients)
@@ -220,8 +220,8 @@ if options.keyboard:
     sustain_status = False
     sharp = 0
     while True:
-         #surface.blit(picture,(0,0))
-         #pygame.display.update()
+         surface.blit(picture,(0,0))
+         pygame.display.update()
          for event in pygame.event.get():
               if event.type == pygame.QUIT:
                  pygame.quit()
