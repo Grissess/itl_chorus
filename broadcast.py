@@ -348,10 +348,7 @@ class NSThread(threading.Thread):
                             print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
                 if options.verbose:
-                    print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-                self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-            if options.verbose:
-                print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
+                    print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
     threads = []
     for ns in notestreams:
