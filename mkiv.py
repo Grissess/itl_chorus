@@ -29,7 +29,8 @@ parser.add_option('-t', '--track', dest='tracks', action='append', help='Reserve
 parser.add_option('--help-conds', dest='help_conds', action='store_true', help='Print help on filter conditions for streams')
 parser.add_option('-P', '--no-percussion', dest='no_perc', action='store_true', help='Don\'t try to filter percussion events out')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
-parser.set_defaults(tracks=[])
+parser.add_option('-n', '--target-num', dest='repeaterNumber', type='int', help='Target count of devices')
+parser.set_defaults(tracks=[], repeaterNumber=1)
 options, args = parser.parse_args()
 
 if options.help_conds:
@@ -72,7 +73,13 @@ if options.fuckit:
     midi.read_midifile = fuckit(midi.read_midifile)
 
 for fname in args:
-    pat = midi.read_midifile(fname)
+    try:
+        pat = midi.read_midifile(fname)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        print fname, ': Exception occurred, skipping...'
+        continue
     if pat is None:
         print fname, ': Too fucked to continue'
         continue
@@ -267,18 +274,28 @@ for fname in args:
 
     ivstreams = ET.SubElement(iv, 'streams')
 
-    for group in notegroups:
-        for ns in group.streams:
-            ivns = ET.SubElement(ivstreams, 'stream')
-            ivns.set('type', 'ns')
-            if group.name is not None:
-                ivns.set('group', group.name)
-            for note in ns.history:
-                ivnote = ET.SubElement(ivns, 'note')
-                ivnote.set('pitch', str(note.ev.pitch))
-                ivnote.set('vel', str(note.ev.velocity))
-                ivnote.set('time', str(note.abstime))
-                ivnote.set('dur', str(note.duration))
+    x = 0 
+    while(x<options.repeaterNumber):
+    	for group in notegroups:
+        	for ns in group.streams:
+            		ivns = ET.SubElement(ivstreams, 'stream')
+            		ivns.set('type', 'ns')
+           		if group.name is not None:
+                		ivns.set('group', group.name)
+            		for note in ns.history:
+                		ivnote = ET.SubElement(ivns, 'note')
+                		ivnote.set('pitch', str(note.ev.pitch))
+              			ivnote.set('vel', str(note.ev.velocity))
+        	       		ivnote.set('time', str(note.abstime))
+ 	               		ivnote.set('dur', str(note.duration))
+			x+=1
+			print x
+			if(x>=options.repeaterNumber and options.repeaterNumber!=1):
+				break
+		if(x>=options.repeaterNumber and options.repeaterNumber!=1):
+			break
+	if(x>=options.repeaterNumber and options.repeaterNumber!=1):
+		break
 
     ivaux = ET.SubElement(ivstreams, 'stream')
     ivaux.set('type', 'aux')

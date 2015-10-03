@@ -11,7 +11,8 @@ from packet import Packet, CMD, itos
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
-parser.add_option('-T', '--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
+parser.add_option('-T', '--transpose', dest='transpose', type='int', help='Transpose by a set amount of semitones (positive or negative)')
+parser.add_option('--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
 parser.add_option('-R', '--random', dest='random', type='float', help='Generate random notes at approximately this period')
 parser.add_option('--rand-low', dest='rand_low', type='int', help='Low frequency to randomly sample')
 parser.add_option('--rand-high', dest='rand_high', type='int', help='High frequency to randomly sample')
@@ -28,7 +29,7 @@ parser.add_option('-r', '--route', dest='routes', action='append', help='Add a r
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[])
+parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -320,7 +321,7 @@ class NSThread(threading.Thread):
 		nsq, cl = self._Thread__args
 		for note in nsq:
 			ttime = float(note.get('time'))
-			pitch = int(note.get('pitch'))
+			pitch = int(note.get('pitch')) + options.transpose
 			vel = int(note.get('vel'))
 			dur = factor*float(note.get('dur'))
 			while time.time() - BASETIME < factor*ttime:
