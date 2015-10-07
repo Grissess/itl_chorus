@@ -22,7 +22,7 @@ parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instru
 parser.add_option('-p', '--play', dest='play', action='append', help='Play a single tone or chord (specified multiple times) on all listening clients (either "midi pitch" or "@frequency")')
 parser.add_option('-P', '--play-async', dest='play_async', action='store_true', help='Don\'t wait for the tone to finish using the local clock')
 parser.add_option('-D', '--duration', dest='duration', type='float', help='How long to play this note for')
-parser.add_option('-V', '--volume', dest='volume', type='int', help='How loud to play this note (0-255)')
+parser.add_option('-V', '--volume', dest='volume', type='int', help='Master volume (0-255)')
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
@@ -329,7 +329,7 @@ for fname in args:
 			dur = factor*float(note.get('dur'))
 			while time.time() - BASETIME < factor*ttime:
 				self.wait_for(factor*ttime - (time.time() - BASETIME))
-			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel*2)), cl)
+			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
                         if options.verbose:
                             print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
