@@ -21,6 +21,7 @@ parser.add_option('--generators', dest='generators', action='store_true', help='
 parser.add_option('-u', '--uid', dest='uid', default='', help='Set the UID (identifier) of this client in the network')
 parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='Set the port to listen on')
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
+parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
 
 options, args = parser.parse_args()
 
@@ -171,7 +172,7 @@ def samps(freq, phase, cnt):
     global RATE, AMP
     samps = [0]*cnt
     for i in xrange(cnt):
-        samps[i] = int(AMP * generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))
+        samps[i] = int(AMP * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
     return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
 
 def to_data(samps):
