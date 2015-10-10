@@ -72,6 +72,8 @@ try:
 except socket.timeout:
 	pass
 
+print len(clients), 'detected clients'
+
 print 'Clients:'
 for cl in clients:
 	print cl,
@@ -211,7 +213,6 @@ except IOError:
 notestreams = iv.findall("./streams/stream[@type='ns']")
 groups = set([ns.get('group') for ns in notestreams if 'group' in ns.keys()])
 print len(notestreams), 'notestreams'
-print len(clients), 'clients'
 print len(groups), 'groups'
 
 class Route(object):
@@ -337,7 +338,7 @@ class NSThread(threading.Thread):
 			dur = factor*float(note.get('dur'))
 			while time.time() - BASETIME < factor*ttime:
 				self.wait_for(factor*ttime - (time.time() - BASETIME))
-			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel*2)), cl)
+			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), vel * 2 * (options.volume / 255.0))), cl)
                         if options.verbose:
                             print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
