@@ -23,12 +23,13 @@ parser.add_option('-P', '--play-async', dest='play_async', action='store_true', 
 parser.add_option('-D', '--duration', dest='duration', type='float', help='How long to play this note for')
 parser.add_option('-V', '--volume', dest='volume', type='int', help='How loud to play this note (0-255)')
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
+parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[])
+parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], seek=0.0)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -312,6 +313,15 @@ if options.verbose:
         print route
 
 class NSThread(threading.Thread):
+        def drop_missed(self):
+            nsq, cl = self._Thread__args
+            cnt = 0
+            while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
+                nsq.pop(0)
+                cnt += 1
+            if options.verbose:
+                print self, 'dropped', cnt, 'notes due to miss'
+            self._Thread__args = (nsq, cl)
         def wait_for(self, t):
             if t <= 0:
                 return
@@ -344,7 +354,10 @@ if options.verbose:
     for thr in threads:
         print thr._Thread__args[1]
 
-BASETIME = time.time()
+BASETIME = time.time() - (options.seek*factor)
+if options.seek > 0:
+    for thr in threads:
+        thr.drop_missed()
 for thr in threads:
 	thr.start()
 for thr in threads:
