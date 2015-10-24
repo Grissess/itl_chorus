@@ -30,7 +30,6 @@ parser.add_option('-r', '--route', dest='routes', action='append', help='Add a r
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], seek=0.0)
 parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0)
 options, args = parser.parse_args()
 
@@ -90,10 +89,10 @@ for cl in clients:
         uid_groups.setdefault(uid, []).append(cl)
         type_groups.setdefault(tp, []).append(cl)
 	if options.test:
-		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, 255)), cl)
+		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, options.volume)), cl)
                 if not options.sync_test:
                     time.sleep(0.25)
-                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
+                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, options.volume)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
@@ -136,7 +135,7 @@ if options.live or options.list_live:
         exit()
     seq = sequencer.SequencerRead(sequencer_resolution=120)
     client_set = set(clients)
-    active_set = {} # note (pitch) -> client
+    active_set = {} # note (pitch) -> [client]
     deferred_set = set() # pitches held due to sustain
     sustain_status = False
     client, _, port = options.live.partition(',')
@@ -156,7 +155,7 @@ if options.live or options.list_live:
             elif ev.type == S.SND_SEQ_EVENT_CONTROLLER:
                 event = midi.ControlChangeEvent(channel = ev.data.control.channel, control = ev.data.control.param, value = ev.data.control.value)
             elif ev.type == S.SND_SEQ_EVENT_PGMCHANGE:
-                event = midi.ProgramChangeEvent(channel = ev.data.control.channel, pitch = ev.data.control.value)
+                event = midi.ProgramChangeEvent(channel = ev.data.control.channel, value = ev.data.control.value)
             elif ev.type == S.SND_SEQ_EVENT_PITCHBEND:
                 event = midi.PitchWheelEvent(channel = ev.data.control.channel, pitch = ev.data.control.value)
             elif options.verbose:
@@ -171,34 +170,36 @@ if options.live or options.list_live:
                 if event.pitch in active_set:
                     if sustain_status:
                         deferred_set.discard(event.pitch)
-                    else:
-                        print 'WARNING: Note already activated: %r'%(event.pitch,),
-                    continue
-                inactive_set = client_set - set(active_set.values())
+                inactive_set = client_set - set(sum(active_set.values(), []))
                 if not inactive_set:
                     print 'WARNING: Out of clients to do note %r; dropped'%(event.pitch,)
                     continue
-                cli = random.choice(list(inactive_set))
+                cli = sorted(inactive_set)[0]
                 s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), 2*event.velocity)), cli)
-                active_set[event.pitch] = cli
+                active_set.setdefault(event.pitch, []).append(cli)
+                if options.verbose:
+                    print 'LIVE:', event.pitch, '+ =>', active_set[event.pitch]
             elif isinstance(event, midi.NoteOffEvent):
-                if event.pitch not in active_set:
+                if event.pitch not in active_set or not active_set[event.pitch]:
                     print 'WARNING: Deactivating inactive note %r'%(event.pitch,)
                     continue
                 if sustain_status:
                     deferred_set.add(event.pitch)
                     continue
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[event.pitch])
-                del active_set[event.pitch]
+                cli = active_set[event.pitch].pop()
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                if options.verbose:
+                    print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
             elif isinstance(event, midi.ControlChangeEvent):
                 if event.control == 64:
                     sustain_status = (event.value >= 64)
                     if not sustain_status:
                         for pitch in deferred_set:
-                            if pitch not in active_set:
+                            if pitch not in active_set or not active_set[pitch]:
                                 print 'WARNING: Attempted deferred removal of inactive note %r'%(pitch,)
                                 continue
-                            s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), active_set[pitch])
+                            for cli in active_set[pitch]:
+                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
                             del active_set[pitch]
                         deferred_set.clear()
 
