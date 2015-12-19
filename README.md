@@ -94,3 +94,5 @@ to do so should know the following about the IV files:
   - Would also be nice to do this from the broadcaster's end without introducing RCE
   - Might require integration of another large libary like fluidsynth--at which point this would just be "networked MIDI" :)
 - Code cleanup--make the entire project slightly more modular and palatable
+- Graphics--display pretty things on machines with the capability
+  - Probably via pygame...
