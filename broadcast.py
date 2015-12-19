@@ -320,8 +320,7 @@ for fname in args:
         for route in routeset.routes:
             print route
 
-<<<<<<< HEAD
-class NSThread(threading.Thread):
+    class NSThread(threading.Thread):
         def drop_missed(self):
             nsq, cl = self._Thread__args
             cnt = 0
@@ -331,9 +330,6 @@ class NSThread(threading.Thread):
             if options.verbose:
                 print self, 'dropped', cnt, 'notes due to miss'
             self._Thread__args = (nsq, cl)
-=======
-    class NSThread(threading.Thread):
->>>>>>> 7c9661d892f6145d123d91924b720d9d87b69502
         def wait_for(self, t):
             if t <= 0:
                 return
@@ -351,8 +347,37 @@ class NSThread(threading.Thread):
                         if options.verbose:
                             print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
+=======
+    class NSThread(threading.Thread):
+            def drop_missed(self):
+                nsq, cl = self._Thread__args
+                cnt = 0
+                while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
+                    nsq.pop(0)
+                    cnt += 1
+>>>>>>> Stashed changes
                 if options.verbose:
-                    print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
+                    print self, 'dropped', cnt, 'notes due to miss'
+                self._Thread__args = (nsq, cl)
+            def wait_for(self, t):
+                if t <= 0:
+                    return
+                time.sleep(t)
+            def run(self):
+                    nsq, cl = self._Thread__args
+                    for note in nsq:
+                            ttime = float(note.get('time'))
+                            pitch = int(note.get('pitch')) + options.transpose
+                            vel = int(note.get('vel'))
+                            dur = factor*float(note.get('dur'))
+                            while time.time() - BASETIME < factor*ttime:
+                                    self.wait_for(factor*ttime - (time.time() - BASETIME))
+                            s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
+                            if options.verbose:
+                                print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
+                            self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
+                    if options.verbose:
+                        print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
     threads = []
     for ns in notestreams:

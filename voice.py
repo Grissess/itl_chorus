@@ -36,6 +36,7 @@ most abstracted:
 import math
 import pyaudio
 import struct
+import time
 
 def norm_theta(theta):
     return theta % (2*math.pi)
@@ -48,30 +49,6 @@ def theta2lin(theta):
 
 def lin2theta(lin):
     return lin * 2*math.pi
-
-class ParamInfo(object):
-    PT_ANY =       0x0000
-    PT_CONST =     0x0001
-    PT_SPECIAL =   0x0002
-    PT_INT =       0x0100
-    PT_FLOAT =     0x0200
-    PT_STR =       0x0400
-    PT_THETA =     0x0102
-    PT_TIME_SEC =  0x0202
-    PT_SAMPLES =   0x0302
-    PT_REALTIME =  0x0402
-    def __init__(self, name, tp=PT_ANY):
-        self.name = name
-        self.tp = tp
-
-class GenInfo(object):
-    def __init__(self, name, *params):
-        self.name = name
-        self.params = list(params)
-
-class Generator(object):
-    class __metaclass__(type):
-        def __init__(self
 
 class Voice(object):
     @classmethod
@@ -114,3 +91,11 @@ class VSumMixer(Voice):
         self.voices = list(voices)
     def __call__(self, theta):
         return norm_amp(sum([i(theta) for i in self.voices]))
+
+class VLFOMixer(Voice):
+    def __init__(self, lfo, *voices):
+        self.lfo = lfo
+        self.voices = list(voices)
+    def __call__(self, theta):
+        i = int(len(self.voices) * self.lfo * (time.time() % (1.0 / self.lfo)))
+        return self.voices[i](theta)
