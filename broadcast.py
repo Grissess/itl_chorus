@@ -320,6 +320,7 @@ for fname in args:
         for route in routeset.routes:
             print route
 
+<<<<<<< HEAD
 class NSThread(threading.Thread):
         def drop_missed(self):
             nsq, cl = self._Thread__args
@@ -330,6 +331,9 @@ class NSThread(threading.Thread):
             if options.verbose:
                 print self, 'dropped', cnt, 'notes due to miss'
             self._Thread__args = (nsq, cl)
+=======
+    class NSThread(threading.Thread):
+>>>>>>> 7c9661d892f6145d123d91924b720d9d87b69502
         def wait_for(self, t):
             if t <= 0:
                 return
@@ -361,6 +365,7 @@ class NSThread(threading.Thread):
         print 'Playback threads:'
         for thr in threads:
             print thr._Thread__args[1]
+<<<<<<< HEAD
 
     BASETIME = time.time() - (options.seek*factor)
     if options.seek > 0:
@@ -370,4 +375,13 @@ class NSThread(threading.Thread):
             thr.start()
     for thr in threads:
             thr.join()
+=======
+
+    BASETIME = time.time()
+    for thr in threads:
+        thr.start()
+    for thr in threads:
+        thr.join()
+
+>>>>>>> 7c9661d892f6145d123d91924b720d9d87b69502
     print fname, ': Done!'
