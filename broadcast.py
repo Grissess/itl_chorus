@@ -347,7 +347,6 @@ for fname in args:
                         if options.verbose:
                             print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
 			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-=======
     class NSThread(threading.Thread):
             def drop_missed(self):
                 nsq, cl = self._Thread__args
@@ -355,7 +354,6 @@ for fname in args:
                 while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
                     nsq.pop(0)
                     cnt += 1
->>>>>>> Stashed changes
                 if options.verbose:
                     print self, 'dropped', cnt, 'notes due to miss'
                 self._Thread__args = (nsq, cl)
@@ -390,7 +388,6 @@ for fname in args:
         print 'Playback threads:'
         for thr in threads:
             print thr._Thread__args[1]
-<<<<<<< HEAD
 
     BASETIME = time.time() - (options.seek*factor)
     if options.seek > 0:
@@ -400,13 +397,4 @@ for fname in args:
             thr.start()
     for thr in threads:
             thr.join()
-=======
-
-    BASETIME = time.time()
-    for thr in threads:
-        thr.start()
-    for thr in threads:
-        thr.join()
-
->>>>>>> 7c9661d892f6145d123d91924b720d9d87b69502
     print fname, ': Done!'
