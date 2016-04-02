@@ -18,6 +18,7 @@ parser.add_option('--rand-low', dest='rand_low', type='int', help='Low frequency
 parser.add_option('--rand-high', dest='rand_high', type='int', help='High frequency to randomly sample')
 parser.add_option('-l', '--live', dest='live', help='Enter live mode (play from a controller in real time), specifying the port to connect to as "client,port"; use just "," to manually subscribe later')
 parser.add_option('-L', '--list-live', dest='list_live', action='store_true', help='List all the clients and ports that can be connected to for live performance')
+parser.add_option('--no-sustain', dest='no_sustain', action='store_true', help='Don\'t use sustain hacks in live mode')
 parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instruct all clients to quit')
 parser.add_option('-p', '--play', dest='play', action='append', help='Play a single tone or chord (specified multiple times) on all listening clients (either "midi pitch" or "@frequency")')
 parser.add_option('-P', '--play-async', dest='play_async', action='store_true', help='Don\'t wait for the tone to finish using the local clock')
@@ -129,7 +130,7 @@ if options.test or options.quit or options.silence:
 if options.random > 0:
     while True:
         for cl in clients:
-            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), 255)), cl)
+            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), options.volume)), cl)
         time.sleep(options.random)
 
 if options.live or options.list_live:
@@ -148,6 +149,7 @@ if options.live or options.list_live:
     if client or port:
         seq.subscribe_port(client, port)
     seq.start_sequencer()
+    seq.set_nonblock(False)
     while True:
         ev = S.event_input(seq.client)
         event = None
@@ -198,9 +200,13 @@ if options.live or options.list_live:
                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
+                    if sustain_status:
+                        print '...ignored (sustain on)'
             elif isinstance(event, midi.ControlChangeEvent):
-                if event.control == 64:
+                if event.control == 64 and not options.no_sustain:
                     sustain_status = (event.value >= 64)
+                    if options.verbose:
+                        print 'LIVE: SUSTAIN', ('+' if sustain_status else '-')
                     if not sustain_status:
                         for pitch in deferred_set:
                             if pitch not in active_set or not active_set[pitch]:
