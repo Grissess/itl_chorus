@@ -11,6 +11,7 @@ import socket
 import optparse
 import array
 import random
+import threading
 
 from packet import Packet, CMD, stoi
 
@@ -22,6 +23,7 @@ parser.add_option('-u', '--uid', dest='uid', default='', help='Set the UID (iden
 parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='Set the port to listen on')
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
+parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 
 options, args = parser.parse_args()
 
@@ -31,6 +33,7 @@ IDENT = 'TONE'
 UID = options.uid
 
 LAST_SAMP = 0
+LAST_SAMPLES = []
 FREQ = 0
 PHASE = 0
 RATE = options.rate
@@ -43,6 +46,77 @@ MIN = -0x80000000
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
+
+# GUIs
+
+GUIs = {}
+
+def GUI(f):
+    GUIs[f.__name__] = f
+    return f
+
+@GUI
+def pygame_notes():
+    import pygame
+    import pygame.gfxdraw
+    pygame.init()
+
+    SAMP_WIDTH = 512
+    BGR_WIDTH = 512
+    HEIGHT = 1024
+
+    disp = pygame.display.set_mode((SAMP_WIDTH + BGR_WIDTH, HEIGHT))
+
+    WIDTH, HEIGHT = disp.get_size()
+    SAMP_WIDTH = WIDTH / 2
+    BGR_WIDTH = WIDTH - SAMP_WIDTH
+    PFAC = HEIGHT / 128.0
+
+    sampwin = pygame.Surface((SAMP_WIDTH, HEIGHT))
+    lastsy = HEIGHT / 2
+
+    clock = pygame.time.Clock()
+
+    while True:
+        if FREQ > 0:
+            try:
+                pitch = 12 * math.log(FREQ / 440.0, 2) + 69
+            except ValueError:
+                pitch = 0
+        else:
+            pitch = 0
+        col = [int((AMP / MAX) * 255)] * 3
+
+        disp.fill((0, 0, 0), (BGR_WIDTH, 0, SAMP_WIDTH, HEIGHT))
+        disp.scroll(-1, 0)
+        disp.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
+
+        sampwin.scroll(-len(LAST_SAMPLES), 0)
+        x = max(0, SAMP_WIDTH - len(LAST_SAMPLES))
+        sampwin.fill((0, 0, 0), (x, 0, SAMP_WIDTH - x, HEIGHT))
+        for i in LAST_SAMPLES:
+            sy = int((float(i) / MAX) * (HEIGHT / 2) + (HEIGHT / 2))
+            pygame.gfxdraw.line(sampwin, x - 1, lastsy, x, sy, (0, 255, 0))
+            x += 1
+            lastsy = sy
+        del LAST_SAMPLES[:]
+        #w, h = SAMP_WIDTH, HEIGHT
+        #pts = [(BGR_WIDTH, HEIGHT / 2), (w + BGR_WIDTH, HEIGHT / 2)]
+        #x = w + BGR_WIDTH
+        #for i in reversed(LAST_SAMPLES):
+        #    pts.insert(1, (x, int((h / 2) + (float(i) / MAX) * (h / 2))))
+        #    x -= 1
+        #    if x < BGR_WIDTH:
+        #        break
+        #if len(pts) > 2:
+        #    pygame.gfxdraw.aapolygon(disp, pts, [0, 255, 0])
+        disp.blit(sampwin, (BGR_WIDTH, 0))
+        pygame.display.flip()
+
+        for i in pygame.event.get():
+            pass  # Todo
+
+        clock.tick(60)
 
 # Generator functions--should be cyclic within [0, 2*math.pi) and return [-1, 1]
 
@@ -179,7 +253,7 @@ def to_data(samps):
     return struct.pack('i'*len(samps), *samps)
 
 def gen_data(data, frames, time, status):
-    global FREQ, PHASE, Z_SAMP, LAST_SAMP
+    global FREQ, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES
     if FREQ == 0:
         PHASE = 0
         if LAST_SAMP == 0:
@@ -188,11 +262,18 @@ def gen_data(data, frames, time, status):
         LAST_SAMP = fdata[-1]
         return (to_data(fdata), pyaudio.paContinue)
     fdata, PHASE = samps(FREQ, PHASE, frames)
+    if options.gui:
+        LAST_SAMPLES.extend(fdata)
     LAST_SAMP = fdata[-1]
     return (to_data(fdata), pyaudio.paContinue)
 
 pa = pyaudio.PyAudio()
 stream = pa.open(rate=RATE, channels=1, format=pyaudio.paInt32, output=True, frames_per_buffer=FPB, stream_callback=gen_data)
+
+if options.gui:
+    guithread = threading.Thread(target=GUIs[options.gui])
+    guithread.setDaemon(True)
+    guithread.start()
 
 if options.test:
     FREQ = 440
