@@ -12,6 +12,7 @@ import optparse
 import array
 import random
 import threading
+import thread
 
 from packet import Packet, CMD, stoi
 
@@ -24,6 +25,10 @@ parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
+parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
+parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
+parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the width of the bargraph pane (by default display width / 2)')
+parser.add_option('--pg-height', dest='height', type='int', help='Set the height of the window or full-screen video mode')
 
 options, args = parser.parse_args()
 
@@ -61,11 +66,28 @@ def pygame_notes():
     import pygame.gfxdraw
     pygame.init()
 
-    SAMP_WIDTH = 512
-    BGR_WIDTH = 512
-    HEIGHT = 1024
+    dispinfo = pygame.display.Info()
+    DISP_WIDTH = 640
+    DISP_HEIGHT = 480
+    if dispinfo.current_h > 0 and dispinfo.current_w > 0:
+        DISP_WIDTH = dispinfo.current_w
+        DISP_HEIGHT = dispinfo.current_h
 
-    disp = pygame.display.set_mode((SAMP_WIDTH + BGR_WIDTH, HEIGHT))
+    SAMP_WIDTH = DISP_WIDTH / 2
+    if options.samp_width > 0:
+        SAMP_WIDTH = options.samp_width
+    BGR_WIDTH = DISP_WIDTH / 2
+    if options.bgr_width > 0:
+        NGR_WIDTH = options.bgr_width
+    HEIGHT = DISP_HEIGHT
+    if options.height > 0:
+        HEIGHT = options.height
+
+    flags = 0
+    if options.fullscreen:
+        flags |= pygame.FULLSCREEN
+
+    disp = pygame.display.set_mode((SAMP_WIDTH + BGR_WIDTH, HEIGHT), flags)
 
     WIDTH, HEIGHT = disp.get_size()
     SAMP_WIDTH = WIDTH / 2
@@ -113,8 +135,12 @@ def pygame_notes():
         disp.blit(sampwin, (BGR_WIDTH, 0))
         pygame.display.flip()
 
-        for i in pygame.event.get():
-            pass  # Todo
+        for ev in pygame.event.get():
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    thread.interrupt_main()
+                    pygame.quit()
+                    exit()
 
         clock.tick(60)
 
@@ -257,8 +283,12 @@ def gen_data(data, frames, time, status):
     if FREQ == 0:
         PHASE = 0
         if LAST_SAMP == 0:
+            if options.gui:
+                LAST_SAMPLES.extend([0]*frames)
             return (Z_SAMP*frames, pyaudio.paContinue)
         fdata = lin_seq(LAST_SAMP, 0, frames)
+        if options.gui:
+            LAST_SAMPLES.extend(fdata)
         LAST_SAMP = fdata[-1]
         return (to_data(fdata), pyaudio.paContinue)
     fdata, PHASE = samps(FREQ, PHASE, frames)
