@@ -4,6 +4,7 @@ import struct
 import time
 import xml.etree.ElementTree as ET
 import threading
+import thread
 import optparse
 import random
 
@@ -11,6 +12,7 @@ from packet import Packet, CMD, itos
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
+parser.add_option('--test-delay', dest='test_delay', type='float', help='Time for which to play a test tone')
 parser.add_option('-T', '--transpose', dest='transpose', type='int', help='Transpose by a set amount of semitones (positive or negative)')
 parser.add_option('--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
 parser.add_option('-R', '--random', dest='random', type='float', help='Generate random notes at approximately this period')
@@ -31,8 +33,12 @@ parser.add_option('-r', '--route', dest='routes', action='append', help='Add a r
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
 parser.add_option('-B', '--bind-addr', dest='bind_addr', help='The IP address (or IP:port) to bind to (influences the network to send to)')
+parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
+parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
+parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
+parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='')
+parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -50,6 +56,66 @@ The syntax for that specification resembles the following:
 
 The specifier consists of a comma-separated list of attribute-colon-value pairs, followed by an equal sign. After this is a comma-separated list of exclusivities paired with the name of a stream group as specified in the file. The above example shows that stream groups "bass", "treble", and "beeps" will be routed to clients with UID "bass", "treble", and TYPE "BEEP" respectively. Additionally, TYPE "BEEP" will receive tracks 4 and 6 (indices 3 and 5) of the MIDI file (presumably split with -T), and that these three groups are exclusively to be routed to TYPE "BEEP" clients only (the broadcaster will drop the stream if no more are available), as opposed to the preference of the bass and treble groups, which may be routed onto other stream clients if they are available. Finally, the last route says that all "noise" UID clients should not proceed any further (receiving "null" streams) instead. Order is important; if a "noise" client already received a stream (such as "+beeps"), then it would receive that route with priority.'''
     exit()
+
+GUIS = {}
+
+def gui_pygame():
+    print 'Starting pygame GUI...'
+    import pygame, colorsys
+    pygame.init()
+    print 'Pygame init'
+
+    dispinfo = pygame.display.Info()
+    DISP_WIDTH = 640
+    DISP_HEIGHT = 480
+    if dispinfo.current_h > 0 and dispinfo.current_w > 0:
+        DISP_WIDTH = dispinfo.current_w
+        DISP_HEIGHT = dispinfo.current_h
+    print 'Pygame info'
+
+    WIDTH = DISP_WIDTH
+    if options.pg_width > 0:
+        WIDTH = options.pg_width
+    HEIGHT = DISP_HEIGHT
+    if options.pg_height > 0:
+        HEIGHT = options.pg_height
+
+    flags = 0
+    if options.fullscreen:
+        flags |= pygame.FULLSCREEN
+
+    disp = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+    print 'Disp acquire'
+
+    PFAC = HEIGHT / 128.0
+
+    clock = pygame.time.Clock()
+
+    print 'Pygame GUI initialized, running...'
+
+    while True:
+
+        disp.scroll(-1, 0)
+        disp.fill((0, 0, 0), (WIDTH - 1, 0, 1, HEIGHT))
+        idx = 0
+        for cli, note in sorted(playing_notes.items(), key = lambda pair: pair[0]):
+            pitch = note[0]
+            col = colorsys.hls_to_rgb(float(idx) / len(clients), note[1]/512.0, 1.0)
+            col = [int(i*255) for i in col]
+            disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
+            idx += 1
+        pygame.display.flip()
+
+        for ev in pygame.event.get():
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    thread.interrupt_main()
+                    pygame.quit()
+                    exit()
+
+        clock.tick(60)
+
+GUIS['pygame'] = gui_pygame
 
 PORT = 13676
 factor = options.factor
@@ -78,6 +144,10 @@ try:
 except socket.timeout:
 	pass
 
+playing_notes = {}
+for cli in clients:
+    playing_notes[cli] = (0, 0)
+
 print len(clients), 'detected clients'
 
 print 'Clients:'
@@ -96,14 +166,20 @@ for cl in clients:
         uid_groups.setdefault(uid, []).append(cl)
         type_groups.setdefault(tp, []).append(cl)
 	if options.test:
-		s.sendto(str(Packet(CMD.PLAY, 0, 250000, 440, options.volume)), cl)
+                ts, tms = int(options.test_delay), int(options.test_delay * 1000000) % 1000000
+		s.sendto(str(Packet(CMD.PLAY, ts, tms, 440, options.volume)), cl)
                 if not options.sync_test:
-                    time.sleep(0.25)
-                    s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, options.volume)), cl)
+                    time.sleep(options.test_delay)
+                    s.sendto(str(Packet(CMD.PLAY, ts, tms, 880, options.volume)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cl)
+
+if options.gui:
+    gui_thr = threading.Thread(target=GUIS[options.gui], args=())
+    gui_thr.setDaemon(True)
+    gui_thr.start()
 
 if options.play:
     for i, val in enumerate(options.play):
@@ -134,6 +210,9 @@ if options.random > 0:
         time.sleep(options.random)
 
 if options.live or options.list_live:
+    if options.gui:
+        print 'Waiting a second for GUI init...'
+        time.sleep(3.0)
     import midi
     from midi import sequencer
     S = sequencer.S
@@ -149,9 +228,12 @@ if options.live or options.list_live:
     if client or port:
         seq.subscribe_port(client, port)
     seq.start_sequencer()
-    seq.set_nonblock(False)
+    if not options.gui:  # FIXME
+        seq.set_nonblock(False)
     while True:
         ev = S.event_input(seq.client)
+        if ev is None:
+            time.sleep(0)
         event = None
         if ev:
             if options.verbose:
@@ -187,6 +269,7 @@ if options.live or options.list_live:
                 cli = sorted(inactive_set)[0]
                 s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), 2*event.velocity)), cli)
                 active_set.setdefault(event.pitch, []).append(cli)
+                playing_notes[cli] = (event.pitch, 2*event.velocity)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '+ =>', active_set[event.pitch]
             elif isinstance(event, midi.NoteOffEvent):
@@ -198,6 +281,7 @@ if options.live or options.list_live:
                     continue
                 cli = active_set[event.pitch].pop()
                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                playing_notes[cli] = (0, 0)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
                     if sustain_status:
@@ -214,6 +298,7 @@ if options.live or options.list_live:
                                 continue
                             for cli in active_set[pitch]:
                                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                                playing_notes[cli] = (0, 0)
                             del active_set[pitch]
                         deferred_set.clear()
 
@@ -238,6 +323,8 @@ for fname in args:
                 self.map = uid_groups
             elif fattr == 'T':
                 self.map = type_groups
+            elif fattr == '0':
+                self.map = {}
             else:
                 raise ValueError('Not a valid attribute specifier: %r'%(fattr,))
             self.value = fvalue
@@ -385,7 +472,9 @@ for fname in args:
                             s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
                             if options.verbose:
                                 print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
+                            playing_notes[cl] = (pitch, vel*2)
                             self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
+                            playing_notes[cl] = (0, 0)
                     if options.verbose:
                         print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 

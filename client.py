@@ -78,7 +78,7 @@ def pygame_notes():
         SAMP_WIDTH = options.samp_width
     BGR_WIDTH = DISP_WIDTH / 2
     if options.bgr_width > 0:
-        NGR_WIDTH = options.bgr_width
+        BGR_WIDTH = options.bgr_width
     HEIGHT = DISP_HEIGHT
     if options.height > 0:
         HEIGHT = options.height
@@ -213,6 +213,14 @@ class harmonic(object):
         self.spectrum = spectrum
     def __call__(self, theta):
         return max(-1, min(1, sum([amp*self.gen((i+1)*theta % (2*math.pi)) for i, amp in enumerate(self.spectrum)])))
+
+@generator('General harmonics generator (adds arbitrary overtones)', '(<generator>, <factor of f>, <amplitude>, <factor>, <amplitude>, ...)')
+class genharmonic(object):
+    def __init__(self, gen, *harmonics):
+        self.gen = gen
+        self.harmonics = zip(harmonics[::2], harmonics[1::2])
+    def __call__(self, theta):
+        return max(-1, min(1, sum([amp * self.gen(i * theta % (2*math.pi)) for i, amp in self.harmonics])))
 
 @generator('Mix generator', '(<generator>[, <amp>], [<generator>[, <amp>], [...]])')
 class mixer(object):

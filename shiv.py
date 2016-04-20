@@ -42,3 +42,39 @@ for fname in args:
     print 'File :', fname
     print '\t<computing...>'
 
+    if options.meta:
+        print 'Metatrack:',
+        meta = iv.find('./meta')
+        if meta:
+            print 'exists'
+            print '\tBPM track:',
+            bpms = meta.find('./bpms')
+            if bpms:
+                print 'exists'
+                for elem in bpms.iterfind('./bpm'):
+                    print '\t\tAt ticks {}, time {}: {} bpm'.format(elem.get('ticks'), elem.get('time'), elem.get('bpm'))
+
+    if not (options.number or options.groups or options.notes or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+        continue
+
+    streams = iv.findall('./streams/stream')
+    notestreams = [s for s in streams if s.get('type') == 'ns']
+    if options.number:
+        print 'Stream count:'
+        print '\tNotestreams:', len(notestreams)
+        print '\tTotal:', len(streams)
+
+    if not (options.groups or options.notes or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+        continue
+
+    if options.groups:
+        groups = {}
+        for s in notestreams:
+            group = s.get('group', '<anonymous')
+            groups[group] = groups.get(group, 0) + 1
+        print 'Groups:'
+        for name, cnt in groups.iteritems():
+            print '\t{} ({} streams)'.format(name, cnt)
+
+    if not (options.notes or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+        continue
