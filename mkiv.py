@@ -92,6 +92,8 @@ for fname in args:
     iv.set('version', '1')
     iv.set('src', os.path.basename(fname))
     print fname, ': MIDI format,', len(pat), 'tracks'
+    if options.verbose:
+        print fname, ': MIDI Parameters:', pat.resolution, 'PPQN,', pat.format, 'format'
 
     if options.chansplit:
         print 'Splitting channels...'
@@ -126,6 +128,38 @@ for fname in args:
 ##### Merge events from all tracks into one master list, annotated with track and absolute times #####
     print 'Merging events...'
 
+    class SortEvent(object):
+        __slots__ = ['ev', 'tidx', 'abstick']
+        def __init__(self, ev, tidx, abstick):
+            self.ev = ev
+            self.tidx = tidx
+            self.abstick = abstick
+
+    sorted_events = []
+    for tidx, track in enumerate(pat):
+        absticks = 0
+        for ev in track:
+            absticks += ev.tick
+            sorted_events.append(SortEvent(ev, tidx, absticks))
+
+    sorted_events.sort(key=lambda x: x.abstick)
+    bpm_at = {0: 120}
+
+    for sev in sorted_events:
+        if isinstance(sev.ev, midi.SetTempoEvent):
+            if options.debug:
+                print fname, ': SetTempo at', sev.abstick, 'to', sev.ev.bpm, ':', sev.ev
+            bpm_at[sev.abstick] = sev.ev.bpm
+
+    if options.verbose:
+        print fname, ': Events:', len(sorted_events)
+        print fname, ': Resolved global BPM:', bpm_at
+        if options.debug:
+            btimes = bpm_at.keys()
+            for i in range(len(btimes) - 1):
+                fev = filter(lambda sev: sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
+                print fname, ': BPM partition', i, 'contains', len(fev), 'events'
+
     class MergeEvent(object):
         __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog']
         def __init__(self, ev, tidx, abstime, bank, prog):
@@ -138,7 +172,6 @@ for fname in args:
             return '<ME %r in %d @%f>'%(self.ev, self.tidx, self.abstime)
 
     events = []
-    bpm_at = {0: 120}
     cur_bank = [[0 for i in range(16)] for j in range(len(pat))]
     cur_prog = [[0 for i in range(16)] for j in range(len(pat))]
     chg_bank = [[0 for i in range(16)] for j in range(len(pat))]
@@ -150,12 +183,11 @@ for fname in args:
         abstime = 0
         absticks = 0
         for ev in track:
+            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at.items(), key=lambda pair: pair[0]))[-1][1]
             if options.debug:
-                print ev
-            if isinstance(ev, midi.SetTempoEvent):
-                absticks += ev.tick
-                bpm_at[absticks] = ev.bpm
-            elif isinstance(ev, midi.ProgramChangeEvent):
+                print ev, ': bpm=', bpm
+            absticks += ev.tick
+            if isinstance(ev, midi.ProgramChangeEvent):
                 cur_prog[tidx][ev.channel] = ev.value
                 chg_prog[tidx][ev.channel] += 1
             elif isinstance(ev, midi.ControlChangeEvent):
@@ -170,9 +202,7 @@ for fname in args:
             elif isinstance(ev, midi.Event):
                 if isinstance(ev, midi.NoteOnEvent) and ev.velocity == 0:
                     ev.__class__ = midi.NoteOffEvent #XXX Oww
-                bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at.items(), key=lambda pair: pair[0]))[-1][1]
                 abstime += (60.0 * ev.tick) / (bpm * pat.resolution)
-                absticks += ev.tick
                 events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
 

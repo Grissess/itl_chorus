@@ -166,6 +166,10 @@ def tri_wave(theta):
     else:
         return lin_interp(-1, 0, (theta-3*math.pi/2)/(math.pi/2))
 
+@generator('Saw wave (line from (0, 1) to (2pi, -1))')
+def saw_wave(theta):
+    return lin_interp(1, -1, theta/(math.pi * 2))
+
 @generator('Simple square wave (piecewise 1 at x<pi, 0 else)')
 def square_wave(theta):
     if theta < math.pi:
