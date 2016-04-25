@@ -17,6 +17,8 @@ parser.add_option('--vel-hist-tracks', dest='vel_hist_tracks', action='store_tru
 parser.add_option('-d', '--duration', dest='duration', action='store_true', help='Show the duration of the piece')
 parser.add_option('-D', '--duty-cycle', dest='duty_cycle', action='store_true', help='Show the duration of the notes within tracks, and as a percentage of the piece duration')
 parser.add_option('-H', '--height', dest='height', type='int', help='Height of histograms')
+parser.add_option('-C', '--no-color', dest='no_color', action='store_true', help='Don\'t use ANSI color escapes')
+parser.add_option('-x', '--aux', dest='aux', action='store_true', help='Show information about the auxiliary streams')
 
 parser.add_option('-a', '--almost-all', dest='almost_all', action='store_true', help='Show useful information')
 parser.add_option('-A', '--all', dest='all', action='store_true', help='Show everything')
@@ -34,10 +36,30 @@ if options.almost_all or options.all:
     options.vel_hist = True
     options.duration = True
     options.duty_cycle = True
-    options.meta = True
     if options.all:
+        options.aux = True
+        options.meta = True
         options.histogram_tracks= True
         options.vel_hist_tracks = True
+
+if options.no_color:
+    class COL:
+        NONE=''
+        RED=''
+        GREEN=''
+        BLUE=''
+        YELLOW=''
+        MAGENTA=''
+        CYAN=''
+else:
+    class COL:
+        NONE='\x1b[0m'
+        RED='\x1b[31m'
+        GREEN='\x1b[32m'
+        BLUE='\x1b[34m'
+        YELLOW='\x1b[33m'
+        MAGENTA='\x1b[35m'
+        CYAN='\x1b[36m'
 
 def show_hist(values, height=None):
     if not values:
@@ -49,13 +71,18 @@ def show_hist(values, height=None):
     miny, maxy = min(ys), max(ys)
     xv = range(minx, maxx + 1)
     incs = max((maxy - miny) / height, 1)
-    print '\t --' + '-' * len(xv)
+    print COL.BLUE + '\t --' + '-' * len(xv) + COL.NONE
     for ub in range(maxy + incs, miny, -incs):
-        print '{}\t | {}'.format(ub, ''.join(['#' if values.get(x) > (ub - incs) else ' ' for x in xv]))
-    print '\t |-' + '-' * len(xv)
+        print '{}{}\t | {}{}{}'.format(COL.BLUE, ub, COL.YELLOW, ''.join(['#' if values.get(x) > (ub - incs) else ' ' for x in xv]), COL.NONE)
+    print COL.BLUE + '\t |-' + '-' * len(xv) + COL.NONE
     xvs = map(str, xv)
     for i in range(max(map(len, xvs))):
-        print '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xvs])
+        print COL.BLUE + '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xvs]) + COL.NONE
+    print
+    xcs = map(str, [values.get(x, 0) for x in xv])
+    for i in range(max(map(len, xcs))):
+        print COL.YELLOW + '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xcs]) + COL.NONE
+    print
 
 for fname in args:
     try:
@@ -81,17 +108,18 @@ for fname in args:
                 for elem in bpms.iterfind('./bpm'):
                     print '\t\tAt ticks {}, time {}: {} bpm'.format(elem.get('ticks'), elem.get('time'), elem.get('bpm'))
 
-    if not (options.number or options.groups or options.notes or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+    if not (options.number or options.groups or options.notes or options.histogram or options.histogram_tracks or options.vel_hist or options.vel_hist_tracks or options.duration or options.duty_cycle or options.aux):
         continue
 
     streams = iv.findall('./streams/stream')
     notestreams = [s for s in streams if s.get('type') == 'ns']
+    auxstreams = [s for s in streams if s.get('type') == 'aux']
     if options.number:
         print 'Stream count:'
         print '\tNotestreams:', len(notestreams)
         print '\tTotal:', len(streams)
 
-    if not (options.groups or options.notes or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+    if not (options.groups or options.notes or options.histogram or options.histogram_tracks or options.vel_hist or options.vel_hist_tracks or options.duration or options.duty_cycle or options.aux):
         continue
 
     if options.groups:
@@ -103,7 +131,26 @@ for fname in args:
         for name, cnt in groups.iteritems():
             print '\t{} ({} streams)'.format(name, cnt)
 
-    if not (options.notes or options.notes_stream or options.histogram or options.histogram_tracks or options.duration or options.duty_cycle):
+    if options.aux:
+        import midi
+        fr = midi.FileReader()
+        fr.RunningStatus = None  # XXX Hack
+        print 'Aux stream data:'
+        for aidx, astream in enumerate(auxstreams):
+            evs = astream.findall('ev')
+            failed = 0
+            print '\tFrom stream {}, {} events:'.format(aidx, len(evs))
+            for ev in evs:
+                try:
+                    data = eval(ev.get('data'))
+                    mev = fr.parse_midi_event(iter(data))
+                except AssertionError:
+                    failed += 1
+                else:
+                    print '\t\tAt time {}: {}'.format(ev.get('time'), mev)
+            print '\t\t(...and {} others which failed to parse)'.format(failed)
+
+    if not (options.notes or options.notes_stream or options.histogram or options.histogram_tracks or options.vel_hist or options.vel_hist_tracks or options.duration or options.duty_cycle):
         continue
 
     if options.notes:

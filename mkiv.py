@@ -17,6 +17,7 @@ import os
 import optparse
 
 TRACKS = object()
+PROGRAMS = object()
 
 parser = optparse.OptionParser()
 parser.add_option('-s', '--channel-split', dest='chansplit', action='store_true', help='Split MIDI channels into independent tracks (as far as -T is concerned)')
@@ -25,6 +26,7 @@ parser.add_option('-c', '--preserve-channels', dest='chanskeep', action='store_t
 parser.add_option('-T', '--track-split', dest='tracks', action='append_const', const=TRACKS, help='Ensure all tracks are on non-mutual streams')
 parser.add_option('-t', '--track', dest='tracks', action='append', help='Reserve an exclusive set of streams for certain conditions (try --help-conds)')
 parser.add_option('--help-conds', dest='help_conds', action='store_true', help='Print help on filter conditions for streams')
+parser.add_option('-p', '--program-split', dest='tracks', action='append_const', const=PROGRAMS, help='Ensure all programs are on non-mutual streams (overrides -T presently)')
 parser.add_option('-P', '--percussion', dest='perc', help='Which percussion standard to use to automatically filter to "perc" (GM, GM2, or none)')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
 parser.add_option('-n', '--target-num', dest='repeaterNumber', type='int', help='Target count of devices')
@@ -62,11 +64,19 @@ will cause these groups to be made:
 
 As can be seen, order of specification is important. Equally important is the location of -T, which should be at the end.
 
-NoteOffEvents are always matched to the stream which has their corresponding NoteOnEvent (in track and pitch), and so are
+NoteOffEvents are always matched to the stream which has their corresponding NoteOnEvent (in track, pitch, and channel), and so are
 not affected or observed by filters.
 
 If the filters specified are not a complete cover, an anonymous group will be created with no filter to contain the rest. If
-it is desired to force this group to have a name, use -t <group>=True.'''
+it is desired to force this group to have a name, use -t <group>=True. This should be placed at the end.
+
+-T behaves exactly as if:
+    -t trk0=ev.tidx==0 -t trk1=ev.tidx==1 -t trk2=ev.tidx==2 [...]
+had been specified in its place, though it is automatically sized to the number of tracks. Similarly, -P operates as if
+    -t prg31=ev.prog==31 -t prg81=ev.prog==81 [...]
+had been specified, again containing only the programs that were observed in the piece.
+
+Groups for which no streams are generated are not written to the resulting file.'''
     exit()
 
 if not args:
@@ -178,6 +188,7 @@ for fname in args:
     chg_prog = [[0 for i in range(16)] for j in range(len(pat))]
     ev_cnts = [[0 for i in range(16)] for j in range(len(pat))]
     tnames = [''] * len(pat)
+    progs = set([0])
 
     for tidx, track in enumerate(pat):
         abstime = 0
@@ -189,6 +200,7 @@ for fname in args:
             absticks += ev.tick
             if isinstance(ev, midi.ProgramChangeEvent):
                 cur_prog[tidx][ev.channel] = ev.value
+                progs.add(ev.value)
                 chg_prog[tidx][ev.channel] += 1
             elif isinstance(ev, midi.ControlChangeEvent):
                 if ev.control == 0:
@@ -210,6 +222,7 @@ for fname in args:
         print 'Track name, event count, final banks, bank changes, final programs, program changes:'
         for tidx, tname in enumerate(tnames):
             print tidx, ':', tname, ',', ','.join(map(str, ev_cnts[tidx])), ',', ','.join(map(str, cur_bank[tidx])), ',', ','.join(map(str, chg_bank[tidx])), ',', ','.join(map(str, cur_prog[tidx])), ',', ','.join(map(str, chg_prog[tidx]))
+        print 'All programs observed:', progs
 
     print 'Sorting events...'
 
@@ -275,6 +288,9 @@ for fname in args:
         if spec is TRACKS:
             for tidx in xrange(len(pat)):
                 notegroups.append(NSGroup(filter = lambda mev, tidx=tidx: mev.tidx == tidx, name = 'trk%d'%(tidx,)))
+        elif spec is PROGRAMS:
+            for prog in progs:
+                notegroups.append(NSGroup(filter = lambda mev, prog=prog: mev.prog == prog, name = 'prg%d'%(prog,)))
         else:
             if '=' in spec:
                 name, _, spec = spec.partition('=')

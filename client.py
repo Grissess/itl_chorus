@@ -141,6 +141,10 @@ def pygame_notes():
                     thread.interrupt_main()
                     pygame.quit()
                     exit()
+            elif ev.type == pygame.QUIT:
+                thread.interrupt_main()
+                pygame.quit()
+                exit()
 
         clock.tick(60)
 
