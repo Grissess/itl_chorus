@@ -33,8 +33,13 @@ parser.add_option('-n', '--target-num', dest='repeaterNumber', type='int', help=
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; show important parts about the MIDI scheduling process')
 parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process')
 parser.add_option('-D', '--deviation', dest='deviation', type='int', help='Amount (in semitones/MIDI pitch units) by which a fully deflected pitchbend modifies the base pitch (0 disables pitchbend processing)')
-parser.set_defaults(tracks=[], repeaterNumber=1, perc='GM', deviation=2)
+parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
+parser.set_defaults(tracks=[], repeaterNumber=1, perc='GM', deviation=2, tempo='global')
 options, args = parser.parse_args()
+if options.tempo == 'f1':
+    options.tempo == 'global'
+elif options.tempo == 'f2':
+    options.tempo == 'track'
 
 if options.help_conds:
     print '''Filter conditions are used to route events to groups of streams.
@@ -154,7 +159,10 @@ for fname in args:
             sorted_events.append(SortEvent(ev, tidx, absticks))
 
     sorted_events.sort(key=lambda x: x.abstick)
-    bpm_at = [{0: 120} for i in pat]
+    if options.tempo == 'global':
+        bpm_at = [{0: 120}]
+    else:
+        bpm_at = [{0: 120} for i in pat]
 
     print 'Computing tempos...'
 
@@ -162,7 +170,7 @@ for fname in args:
         if isinstance(sev.ev, midi.SetTempoEvent):
             if options.debug:
                 print fname, ': SetTempo at', sev.abstick, 'to', sev.ev.bpm, ':', sev.ev
-            bpm_at[sev.tidx][sev.abstick] = sev.ev.bpm
+            bpm_at[sev.tidx if options.tempo == 'track' else 0][sev.abstick] = sev.ev.bpm
 
     if options.verbose:
         print fname, ': Events:', len(sorted_events)
@@ -203,7 +211,7 @@ for fname in args:
         abstime = 0
         absticks = 0
         for ev in track:
-            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at[tidx].items(), key=lambda pair: pair[0]))[-1][1]
+            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at[tidx if options.tempo == 'track' else 0].items(), key=lambda pair: pair[0]))[-1][1]
             if options.debug:
                 print ev, ': bpm=', bpm
             absticks += ev.tick
