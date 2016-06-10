@@ -71,13 +71,13 @@ def show_hist(values, height=None):
     miny, maxy = min(ys), max(ys)
     xv = range(minx, maxx + 1)
     incs = max((maxy - miny) / height, 1)
-    print COL.BLUE + '\t --' + '-' * len(xv) + COL.NONE
+    print COL.CYAN + '\t --' + '-' * len(xv) + COL.NONE
     for ub in range(maxy + incs, miny, -incs):
-        print '{}{}\t | {}{}{}'.format(COL.BLUE, ub, COL.YELLOW, ''.join(['#' if values.get(x) > (ub - incs) else ' ' for x in xv]), COL.NONE)
-    print COL.BLUE + '\t |-' + '-' * len(xv) + COL.NONE
+        print '{}{}\t | {}{}{}'.format(COL.CYAN, ub, COL.YELLOW, ''.join(['#' if values.get(x) > (ub - incs) else ' ' for x in xv]), COL.NONE)
+    print COL.CYAN + '\t |-' + '-' * len(xv) + COL.NONE
     xvs = map(str, xv)
     for i in range(max(map(len, xvs))):
-        print COL.BLUE + '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xvs]) + COL.NONE
+        print COL.CYAN + '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xvs]) + COL.NONE
     print
     xcs = map(str, [values.get(x, 0) for x in xv])
     for i in range(max(map(len, xcs))):

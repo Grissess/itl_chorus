@@ -155,6 +155,8 @@ for fname in args:
     sorted_events.sort(key=lambda x: x.abstick)
     bpm_at = {0: 120}
 
+    print 'Computing tempos...'
+
     for sev in sorted_events:
         if isinstance(sev.ev, midi.SetTempoEvent):
             if options.debug:
