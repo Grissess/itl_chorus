@@ -154,7 +154,7 @@ for fname in args:
             sorted_events.append(SortEvent(ev, tidx, absticks))
 
     sorted_events.sort(key=lambda x: x.abstick)
-    bpm_at = {0: 120}
+    bpm_at = [{0: 120} for i in pat]
 
     print 'Computing tempos...'
 
@@ -162,16 +162,18 @@ for fname in args:
         if isinstance(sev.ev, midi.SetTempoEvent):
             if options.debug:
                 print fname, ': SetTempo at', sev.abstick, 'to', sev.ev.bpm, ':', sev.ev
-            bpm_at[sev.abstick] = sev.ev.bpm
+            bpm_at[sev.tidx][sev.abstick] = sev.ev.bpm
 
     if options.verbose:
         print fname, ': Events:', len(sorted_events)
         print fname, ': Resolved global BPM:', bpm_at
         if options.debug:
-            btimes = bpm_at.keys()
-            for i in range(len(btimes) - 1):
-                fev = filter(lambda sev: sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
-                print fname, ': BPM partition', i, 'contains', len(fev), 'events'
+            for tidx, bpms in enumerate(bpm_at):
+                print fname, ': Tempos in track', tidx
+                btimes = bpms.keys()
+                for i in range(len(btimes) - 1):
+                    fev = filter(lambda sev: sev.tidx == tidx and sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
+                    print fname, ': BPM partition', i, 'contains', len(fev), 'events'
 
     class MergeEvent(object):
         __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog']
@@ -201,7 +203,7 @@ for fname in args:
         abstime = 0
         absticks = 0
         for ev in track:
-            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at.items(), key=lambda pair: pair[0]))[-1][1]
+            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at[tidx].items(), key=lambda pair: pair[0]))[-1][1]
             if options.debug:
                 print ev, ': bpm=', bpm
             absticks += ev.tick
@@ -389,17 +391,18 @@ for fname in args:
 ##### Write to XML and exit #####
 
     ivmeta = ET.SubElement(iv, 'meta')
-    ivbpms = ET.SubElement(ivmeta, 'bpms')
     abstime = 0
     prevticks = 0
     prev_bpm = 120
-    for absticks, bpm in sorted(bpm_at.items(), key = lambda pair: pair[0]):
-        abstime += ((absticks - prevticks) * 60.0) / (prev_bpm * pat.resolution)
-        prevticks = absticks
-        ivbpm = ET.SubElement(ivbpms, 'bpm')
-        ivbpm.set('bpm', str(bpm))
-        ivbpm.set('ticks', str(absticks))
-        ivbpm.set('time', str(abstime))
+    for tidx, bpms in enumerate(bpm_at):
+        ivbpms = ET.SubElement(ivmeta, 'bpms', track=str(tidx))
+        for absticks, bpm in sorted(bpms.items(), key = lambda pair: pair[0]):
+            abstime += ((absticks - prevticks) * 60.0) / (prev_bpm * pat.resolution)
+            prevticks = absticks
+            ivbpm = ET.SubElement(ivbpms, 'bpm')
+            ivbpm.set('bpm', str(bpm))
+            ivbpm.set('ticks', str(absticks))
+            ivbpm.set('time', str(abstime))
 
     ivstreams = ET.SubElement(iv, 'streams')
 
