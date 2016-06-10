@@ -32,7 +32,8 @@ parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Us
 parser.add_option('-n', '--target-num', dest='repeaterNumber', type='int', help='Target count of devices')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; show important parts about the MIDI scheduling process')
 parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process')
-parser.set_defaults(tracks=[], repeaterNumber=1, perc='GM')
+parser.add_option('-D', '--deviation', dest='deviation', type='int', help='Amount (in semitones/MIDI pitch units) by which a fully deflected pitchbend modifies the base pitch (0 disables pitchbend processing)')
+parser.set_defaults(tracks=[], repeaterNumber=1, perc='GM', deviation=2)
 options, args = parser.parse_args()
 
 if options.help_conds:
@@ -180,8 +181,12 @@ for fname in args:
             self.abstime = abstime
             self.bank = bank
             self.prog = prog
+        def copy(self, **kwargs):
+            args = {'ev': self.ev, 'tidx': self.tidx, 'abstime': self.abstime, 'bank': self.bank, 'prog': self.prog}
+            args.update(kwargs)
+            return MergeEvent(**args)
         def __repr__(self):
-            return '<ME %r in %d @%f>'%(self.ev, self.tidx, self.abstime)
+            return '<ME %r in %d on (%d:%d) @%f>'%(self.ev, self.tidx, self.bank, self.prog, self.abstime)
 
     events = []
     cur_bank = [[0 for i in range(16)] for j in range(len(pat))]
@@ -234,27 +239,37 @@ for fname in args:
     print 'Generating streams...'
 
     class DurationEvent(MergeEvent):
-        __slots__ = ['duration']
-        def __init__(self, me, dur):
+        __slots__ = ['duration', 'pitch']
+        def __init__(self, me, pitch, dur):
             MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog)
+            self.pitch = pitch
             self.duration = dur
 
     class NoteStream(object):
-        __slots__ = ['history', 'active']
+        __slots__ = ['history', 'active', 'realpitch']
         def __init__(self):
             self.history = []
             self.active = None
+            self.realpitch = None
         def IsActive(self):
             return self.active is not None
-        def Activate(self, mev):
+        def Activate(self, mev, realpitch = None):
+            if realpitch is None:
+                realpitch = mev.ev.pitch
             self.active = mev
+            self.realpitch = realpitch
         def Deactivate(self, mev):
-            self.history.append(DurationEvent(self.active, mev.abstime - self.active.abstime))
+            self.history.append(DurationEvent(self.active, self.realpitch, mev.abstime - self.active.abstime))
             self.active = None
+            self.realpitch = None
         def WouldDeactivate(self, mev):
             if not self.IsActive():
                 return False
-            return mev.ev.pitch == self.active.ev.pitch and mev.tidx == self.active.tidx
+            if isinstance(mev.ev, midi.NoteOffEvent):
+                return mev.ev.pitch == self.active.ev.pitch and mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
+            if isinstance(mev.ev, midi.PitchWheelEvent):
+                return mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
+            raise TypeError('Tried to deactivate with bad type %r'%(type(mev.ev),))
 
     class NSGroup(object):
         __slots__ = ['streams', 'filter', 'name']
@@ -326,6 +341,32 @@ for fname in args:
                     break
             else:
                 print 'WARNING: Did not match %r with any stream deactivation.'%(mev,)
+                if options.verbose:
+                    print '  Current state:'
+                    for group in notegroups:
+                        print '    Group %r:'%(group.name,)
+                        for stream in group.streams:
+                            print '      Stream: %r'%(stream.active,)
+        elif options.deviation > 0 and isinstance(mev.ev, midi.PitchWheelEvent):
+            for group in notegroups:
+                found = False
+                for stream in group.streams:
+                    if stream.WouldDeactivate(mev):
+                        base = stream.active.copy(abstime=mev.abstime)
+                        stream.Deactivate(mev)
+                        stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / 2000.0))
+                        found = True
+                        break
+                if found:
+                    break
+            else:
+                print 'WARNING: Did not find any matching active streams for %r'%(mev,)
+                if options.verbose:
+                    print '  Current state:'
+                    for group in notegroups:
+                        print '    Group %r:'%(group.name,)
+                        for stream in group.streams:
+                            print '      Stream: %r'%(stream.active,)
         else:
             auxstream.append(mev)
 
@@ -372,7 +413,7 @@ for fname in args:
                 		ivns.set('group', group.name)
             		for note in ns.history:
                 		ivnote = ET.SubElement(ivns, 'note')
-                		ivnote.set('pitch', str(note.ev.pitch))
+                		ivnote.set('pitch', str(note.pitch))
               			ivnote.set('vel', str(note.ev.velocity))
         	       		ivnote.set('time', str(note.abstime))
  	               		ivnote.set('dur', str(note.duration))

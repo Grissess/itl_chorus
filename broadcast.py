@@ -464,7 +464,7 @@ for fname in args:
                     nsq, cl = self._Thread__args
                     for note in nsq:
                             ttime = float(note.get('time'))
-                            pitch = int(note.get('pitch')) + options.transpose
+                            pitch = float(note.get('pitch')) + options.transpose
                             vel = int(note.get('vel'))
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:

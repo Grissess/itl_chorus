@@ -3,6 +3,7 @@
 import xml.etree.ElementTree as ET
 import optparse
 import sys
+import math
 
 parser = optparse.OptionParser()
 parser.add_option('-n', '--number', dest='number', action='store_true', help='Show number of tracks')
@@ -69,7 +70,7 @@ def show_hist(values, height=None):
     xs, ys = values.keys(), values.values()
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
-    xv = range(minx, maxx + 1)
+    xv = range(int(math.floor(minx)), int(math.ceil(maxx + 1)))
     incs = max((maxy - miny) / height, 1)
     print COL.CYAN + '\t --' + '-' * len(xv) + COL.NONE
     for ub in range(maxy + incs, miny, -incs):
@@ -173,7 +174,7 @@ for fname in args:
     for sidx, stream in enumerate(notestreams):
         notes = stream.findall('note')
         for note in notes:
-            pitch = int(note.get('pitch'))
+            pitch = float(note.get('pitch'))
             vel = int(note.get('vel'))
             time = float(note.get('time'))
             dur = float(note.get('dur'))
