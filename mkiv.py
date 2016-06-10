@@ -364,7 +364,7 @@ for fname in args:
                     if stream.WouldDeactivate(mev):
                         base = stream.active.copy(abstime=mev.abstime)
                         stream.Deactivate(mev)
-                        stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / 2000.0))
+                        stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / float(0x2000)))
                         found = True
                         break
                 if found:
