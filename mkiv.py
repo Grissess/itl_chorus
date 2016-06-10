@@ -176,12 +176,43 @@ for fname in args:
         print fname, ': Events:', len(sorted_events)
         print fname, ': Resolved global BPM:', bpm_at
         if options.debug:
-            for tidx, bpms in enumerate(bpm_at):
-                print fname, ': Tempos in track', tidx
-                btimes = bpms.keys()
+            if options.tempo == 'track':
+                for tidx, bpms in enumerate(bpm_at):
+                    print fname, ': Tempos in track', tidx
+                    btimes = bpms.keys()
+                    for i in range(len(btimes) - 1):
+                        fev = filter(lambda sev: sev.tidx == tidx and sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
+                        print fname, ': BPM partition', i, 'contains', len(fev), 'events'
+            else:
+                btimes = bpm_at[0].keys()
                 for i in range(len(btimes) - 1):
-                    fev = filter(lambda sev: sev.tidx == tidx and sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
+                    fev = filter(lambda sev: sev.abstick >= btimes[i] and sev.abstick < btimes[i+1], sorted_events)
                     print fname, ': BPM partition', i, 'contains', len(fev), 'events'
+
+    def at2rt(abstick, bpms):
+        bpm_segs = bpms.items()
+        bpm_segs.sort(key=lambda pair: pair[0])
+        bpm_segs = filter(lambda pair: pair[0] <= abstick, bpm_segs)
+        rt = 0
+        atick = 0
+        if not bpm_segs:
+            rt = 0
+        else:
+            ctick, bpm = bpm_segs[0]
+            rt = (60.0 * ctick) / (bpm * pat.resolution)
+        for idx in range(1, len(bpm_segs)):
+            dt = bpm_segs[idx][0] - bpm_segs[idx-1][0]
+            bpm = bpm_segs[idx-1][1]
+            rt += (60.0 * dt) / (bpm * pat.resolution)
+        if not bpm_segs:
+            bpm = 120
+            ctick = 0
+        else:
+            ctick, bpm = bpm_segs[-1]
+        if options.debug:
+            print 'seg through', bpm_segs, 'final seg', (abstick - ctick, bpm)
+        rt += (60.0 * (abstick - ctick)) / (bpm * pat.resolution)
+        return rt
 
     class MergeEvent(object):
         __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog']
@@ -210,11 +241,12 @@ for fname in args:
     for tidx, track in enumerate(pat):
         abstime = 0
         absticks = 0
+        lastbpm = 120
         for ev in track:
-            bpm = filter(lambda pair: pair[0] <= absticks, sorted(bpm_at[tidx if options.tempo == 'track' else 0].items(), key=lambda pair: pair[0]))[-1][1]
-            if options.debug:
-                print ev, ': bpm=', bpm
             absticks += ev.tick
+            abstime = at2rt(absticks, bpm_at[tidx if options.tempo == 'track' else 0])
+            if options.debug:
+                print 'tick', absticks, 'realtime', abstime
             if isinstance(ev, midi.ProgramChangeEvent):
                 cur_prog[tidx][ev.channel] = ev.value
                 progs.add(ev.value)
@@ -231,7 +263,6 @@ for fname in args:
             elif isinstance(ev, midi.Event):
                 if isinstance(ev, midi.NoteOnEvent) and ev.velocity == 0:
                     ev.__class__ = midi.NoteOffEvent #XXX Oww
-                abstime += (60.0 * ev.tick) / (bpm * pat.resolution)
                 events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
 
@@ -358,18 +389,15 @@ for fname in args:
                         for stream in group.streams:
                             print '      Stream: %r'%(stream.active,)
         elif options.deviation > 0 and isinstance(mev.ev, midi.PitchWheelEvent):
+            found = False
             for group in notegroups:
-                found = False
                 for stream in group.streams:
                     if stream.WouldDeactivate(mev):
                         base = stream.active.copy(abstime=mev.abstime)
                         stream.Deactivate(mev)
                         stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / float(0x2000)))
                         found = True
-                        break
-                if found:
-                    break
-            else:
+            if not found:
                 print 'WARNING: Did not find any matching active streams for %r'%(mev,)
                 if options.verbose:
                     print '  Current state:'
