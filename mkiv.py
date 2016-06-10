@@ -247,6 +247,8 @@ for fname in args:
             abstime = at2rt(absticks, bpm_at[tidx if options.tempo == 'track' else 0])
             if options.debug:
                 print 'tick', absticks, 'realtime', abstime
+            if isinstance(ev, midi.TrackNameEvent):
+                tnames[tidx] = ev.text
             if isinstance(ev, midi.ProgramChangeEvent):
                 cur_prog[tidx][ev.channel] = ev.value
                 progs.add(ev.value)
@@ -258,8 +260,8 @@ for fname in args:
                 elif ev.control == 32:
                     cur_bank[tidx][ev.channel] = (0x3F & cur_bank[tidx][ev.channel]) | (ev.value << 7)
                     chg_bank[tidx][ev.channel] += 1
-            elif isinstance(ev, midi.TrackNameEvent):
-                tnames[tidx] = ev.text
+            elif isinstance(ev, midi.MetaEventWithText):
+                events.append(MergeEvent(ev, tidx, abstime, 0, 0))
             elif isinstance(ev, midi.Event):
                 if isinstance(ev, midi.NoteOnEvent) and ev.velocity == 0:
                     ev.__class__ = midi.NoteOffEvent #XXX Oww
@@ -333,6 +335,7 @@ for fname in args:
 
     notegroups = []
     auxstream = []
+    textstream = []
 
     if options.perc and options.perc != 'none':
         if options.perc == 'GM':
@@ -362,7 +365,9 @@ for fname in args:
             print ('<anonymous>' if group.name is None else group.name)
 
     for mev in events:
-        if isinstance(mev.ev, midi.NoteOnEvent):
+        if isinstance(mev.ev, midi.MetaEventWithText):
+            textstream.append(mev)
+        elif isinstance(mev.ev, midi.NoteOnEvent):
             for group in notegroups:
                 if group.Accept(mev):
                     break
@@ -463,6 +468,10 @@ for fname in args:
 			break
 	if(x>=options.repeaterNumber and options.repeaterNumber!=1):
 		break
+
+    ivtext = ET.SubElement(ivstreams, 'stream', type='text')
+    for tev in textstream:
+        ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=tev.ev.text)
 
     ivaux = ET.SubElement(ivstreams, 'stream')
     ivaux.set('type', 'aux')
