@@ -335,7 +335,7 @@ for fname in args:
         for ns in group.streams:
             if ns.IsActive():
                 print 'WARNING: Active notes at end of playback.'
-                ns.Deactivate(MergeEvent(ns.active, ns.active.tidx, lastabstime))
+                ns.Deactivate(MergeEvent(ns.active, ns.active.tidx, lastabstime, 0, 0))
 
     if options.verbose:
         print 'Final group mappings:'
