@@ -29,12 +29,11 @@ parser.add_option('--help-conds', dest='help_conds', action='store_true', help='
 parser.add_option('-p', '--program-split', dest='tracks', action='append_const', const=PROGRAMS, help='Ensure all programs are on non-mutual streams (overrides -T presently)')
 parser.add_option('-P', '--percussion', dest='perc', help='Which percussion standard to use to automatically filter to "perc" (GM, GM2, or none)')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
-parser.add_option('-n', '--target-num', dest='repeaterNumber', type='int', help='Target count of devices')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; show important parts about the MIDI scheduling process')
-parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process')
+parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process (please use less or write to a file)')
 parser.add_option('-D', '--deviation', dest='deviation', type='int', help='Amount (in semitones/MIDI pitch units) by which a fully deflected pitchbend modifies the base pitch (0 disables pitchbend processing)')
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
-parser.set_defaults(tracks=[], repeaterNumber=1, perc='GM', deviation=2, tempo='global')
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global')
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -447,27 +446,18 @@ for fname in args:
 
     ivstreams = ET.SubElement(iv, 'streams')
 
-    x = 0 
-    while(x<options.repeaterNumber):
-    	for group in notegroups:
-        	for ns in group.streams:
-            		ivns = ET.SubElement(ivstreams, 'stream')
-            		ivns.set('type', 'ns')
-           		if group.name is not None:
-                		ivns.set('group', group.name)
-            		for note in ns.history:
-                		ivnote = ET.SubElement(ivns, 'note')
-                		ivnote.set('pitch', str(note.pitch))
-              			ivnote.set('vel', str(note.ev.velocity))
-        	       		ivnote.set('time', str(note.abstime))
- 	               		ivnote.set('dur', str(note.duration))
-			x+=1
-			if(x>=options.repeaterNumber and options.repeaterNumber!=1):
-				break
-		if(x>=options.repeaterNumber and options.repeaterNumber!=1):
-			break
-	if(x>=options.repeaterNumber and options.repeaterNumber!=1):
-		break
+    for group in notegroups:
+            for ns in group.streams:
+                    ivns = ET.SubElement(ivstreams, 'stream')
+                    ivns.set('type', 'ns')
+                    if group.name is not None:
+                            ivns.set('group', group.name)
+                    for note in ns.history:
+                            ivnote = ET.SubElement(ivns, 'note')
+                            ivnote.set('pitch', str(note.pitch))
+                            ivnote.set('vel', str(note.ev.velocity))
+                            ivnote.set('time', str(note.abstime))
+                            ivnote.set('dur', str(note.duration))
 
     ivtext = ET.SubElement(ivstreams, 'stream', type='text')
     for tev in textstream:

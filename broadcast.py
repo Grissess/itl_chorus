@@ -7,6 +7,7 @@ import threading
 import thread
 import optparse
 import random
+import itertools
 
 from packet import Packet, CMD, itos
 
@@ -33,12 +34,14 @@ parser.add_option('-r', '--route', dest='routes', action='append', help='Add a r
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
 parser.add_option('-B', '--bind-addr', dest='bind_addr', help='The IP address (or IP:port) to bind to (influences the network to send to)')
+parser.add_option('--repeat', dest='repeat', action='store_true', help='Repeat the file playlist indefinitely')
+parser.add_option('-n', '--number', dest='number', type='int', help='Number of clients to use; if negative (default -1), use the product of stream count and the absolute value of this parameter')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0)
+parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -302,6 +305,9 @@ if options.live or options.list_live:
                             del active_set[pitch]
                         deferred_set.clear()
 
+if options.repeat:
+    args = itertools.cycle(args)
+
 for fname in args:
     try:
         iv = ET.parse(fname).getroot()
@@ -313,9 +319,11 @@ for fname in args:
 
     notestreams = iv.findall("./streams/stream[@type='ns']")
     groups = set([ns.get('group') for ns in notestreams if 'group' in ns.keys()])
+    number = (len(notestreams) * abs(options.number) if options.number < 0 else options.number)
     print len(notestreams), 'notestreams'
     print len(clients), 'clients'
     print len(groups), 'groups'
+    print number, 'clients used (number)'
 
     class Route(object):
         def __init__(self, fattr, fvalue, group, excl=False):
@@ -461,7 +469,7 @@ for fname in args:
                     return
                 time.sleep(t)
             def run(self):
-                    nsq, cl = self._Thread__args
+                    nsq, cls = self._Thread__args
                     for note in nsq:
                             ttime = float(note.get('time'))
                             pitch = float(note.get('pitch')) + options.transpose
@@ -469,7 +477,8 @@ for fname in args:
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:
                                     self.wait_for(factor*ttime - (time.time() - BASETIME))
-                            s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
+                            for cl in cls:
+                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
                             if options.verbose:
                                 print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
                             playing_notes[cl] = (pitch, vel*2)
@@ -478,24 +487,28 @@ for fname in args:
                     if options.verbose:
                         print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
-    threads = []
-    for ns in notestreams:
+    threads = {}
+    nscycle = itertools.cycle(notestreams)
+    for idx, ns in zip(xrange(number), nscycle):
         cli = routeset.Route(ns)
         if cli:
             nsq = ns.findall('note')
-            threads.append(NSThread(args=(nsq, cli)))
+            if ns in threads:
+                threads[ns]._Thread__args[1].add(cli)
+            else:
+                threads[ns] = NSThread(args=(nsq, set([cli])))
 
     if options.verbose:
         print 'Playback threads:'
-        for thr in threads:
+        for thr in threads.values():
             print thr._Thread__args[1]
 
     BASETIME = time.time() - (options.seek*factor)
     if options.seek > 0:
-        for thr in threads:
+        for thr in threads.values():
             thr.drop_missed()
-    for thr in threads:
+    for thr in threads.values():
             thr.start()
-    for thr in threads:
+    for thr in threads.values():
             thr.join()
     print fname, ': Done!'
