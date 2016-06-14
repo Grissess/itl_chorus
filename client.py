@@ -294,14 +294,14 @@ def samps(freq, amp, phase, cnt):
     global RATE
     samps = [0]*cnt
     for i in xrange(cnt):
-        samps[i] = int(amp / float(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
+        samps[i] = int(amp / math.sqrt(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
     return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
 
 def to_data(samps):
     return struct.pack('i'*len(samps), *samps)
 
 def mix(a, b):
-    return [i + j for i, j in zip(a, b)]
+    return [min(MAX, max(MIN, i + j)) for i, j in zip(a, b)]
 
 def gen_data(data, frames, tm, status):
     global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES
@@ -315,6 +315,7 @@ def gen_data(data, frames, tm, status):
         if FREQ != 0:
             if time.clock() > EXPIRATION:
                 FREQ = 0
+                FREQS[i] = 0
         if FREQ == 0:
             PHASES[i] = 0
             if LAST_SAMP != 0:
