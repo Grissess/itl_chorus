@@ -32,8 +32,14 @@ parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Us
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; show important parts about the MIDI scheduling process')
 parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process (please use less or write to a file)')
 parser.add_option('-D', '--deviation', dest='deviation', type='int', help='Amount (in semitones/MIDI pitch units) by which a fully deflected pitchbend modifies the base pitch (0 disables pitchbend processing)')
+parser.add_option('-M', '--modwheel-freq-dev', dest='modfdev', type='float', help='Amount (in semitones/MIDI pitch unites) by which a fully-activated modwheel modifies the base pitch')
+parser.add_option('--modwheel-freq-freq', dest='modffreq', type='float', help='Frequency of modulation periods (sinusoids) of the modwheel acting on the base pitch')
+parser.add_option('--modwheel-amp-dev', dest='modadev', type='float', help='Deviation [0, 1] by which a fully-activated modwheel affects the amplitude as a factor of that amplitude')
+parser.add_option('--modwheel-amp-freq', dest='modafreq', type='float', help='Frequency of modulation periods (sinusoids) of the modwheel acting on amplitude')
+parser.add_option('--modwheel-res', dest='modres', type='float', help='(Fractional) seconds by which to resolve modwheel events (0 to disable)')
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global')
+parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.01, modfdev=1.0, modffreq=5.0, modadev=0.5, modafreq=5.0)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -49,6 +55,7 @@ The "ev" object will be a MergeEvent with the following properties:
 -ev.abstime: the real time in seconds of this event relative to the beginning of playback
 -ev.bank: the selected bank (all bits)
 -ev.prog: the selected program
+-ev.mw: the modwheel value
 -ev.ev: a midi.NoteOnEvent:
     -ev.ev.pitch: the MIDI pitch
     -ev.ev.velocity: the MIDI velocity
@@ -214,23 +221,26 @@ for fname in args:
         return rt
 
     class MergeEvent(object):
-        __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog']
-        def __init__(self, ev, tidx, abstime, bank, prog):
+        __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog', 'mw']
+        def __init__(self, ev, tidx, abstime, bank=0, prog=0, mw=0):
             self.ev = ev
             self.tidx = tidx
             self.abstime = abstime
             self.bank = bank
             self.prog = prog
+            self.mw = mw
         def copy(self, **kwargs):
-            args = {'ev': self.ev, 'tidx': self.tidx, 'abstime': self.abstime, 'bank': self.bank, 'prog': self.prog}
+            args = {'ev': self.ev, 'tidx': self.tidx, 'abstime': self.abstime, 'bank': self.bank, 'prog': self.prog, 'mw': self.mw}
             args.update(kwargs)
             return MergeEvent(**args)
         def __repr__(self):
-            return '<ME %r in %d on (%d:%d) @%f>'%(self.ev, self.tidx, self.bank, self.prog, self.abstime)
+            return '<ME %r in %d on (%d:%d) MW:%d @%f>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime)
 
     events = []
+    cur_mw = [[0 for i in range(16)] for j in range(len(pat))]
     cur_bank = [[0 for i in range(16)] for j in range(len(pat))]
     cur_prog = [[0 for i in range(16)] for j in range(len(pat))]
+    chg_mw = [[0 for i in range(16)] for j in range(len(pat))]
     chg_bank = [[0 for i in range(16)] for j in range(len(pat))]
     chg_prog = [[0 for i in range(16)] for j in range(len(pat))]
     ev_cnts = [[0 for i in range(16)] for j in range(len(pat))]
@@ -253,18 +263,26 @@ for fname in args:
                 progs.add(ev.value)
                 chg_prog[tidx][ev.channel] += 1
             elif isinstance(ev, midi.ControlChangeEvent):
-                if ev.control == 0:
+                if ev.control == 0:  # Bank -- MSB
                     cur_bank[tidx][ev.channel] = (0x3F80 & cur_bank[tidx][ev.channel]) | ev.value
                     chg_bank[tidx][ev.channel] += 1
-                elif ev.control == 32:
+                elif ev.control == 32:  # Bank -- LSB
                     cur_bank[tidx][ev.channel] = (0x3F & cur_bank[tidx][ev.channel]) | (ev.value << 7)
                     chg_bank[tidx][ev.channel] += 1
+                elif ev.control == 1:  # ModWheel -- MSB
+                    cur_mw[tidx][ev.channel] = (0x3F80 & cur_mw[tidx][ev.channel]) | ev.value
+                    chg_mw[tidx][ev.channel] += 1
+                elif ev.control == 33:  # ModWheel -- LSB
+                    cur_mw[tidx][ev.channel] = (0x3F & cur_mw[tidx][ev.channel]) | (ev.value << 7)
+                    chg_mw[tidx][ev.channel] += 1
+                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
+                ev_cnts[tidx][ev.channel] += 1
             elif isinstance(ev, midi.MetaEventWithText):
-                events.append(MergeEvent(ev, tidx, abstime, 0, 0))
+                events.append(MergeEvent(ev, tidx, abstime))
             elif isinstance(ev, midi.Event):
                 if isinstance(ev, midi.NoteOnEvent) and ev.velocity == 0:
                     ev.__class__ = midi.NoteOffEvent #XXX Oww
-                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel]))
+                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
 
     if options.verbose:
@@ -281,27 +299,32 @@ for fname in args:
     print 'Generating streams...'
 
     class DurationEvent(MergeEvent):
-        __slots__ = ['duration', 'pitch']
-        def __init__(self, me, pitch, dur):
-            MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog)
+        __slots__ = ['duration', 'pitch', 'modwheel', 'ampl']
+        def __init__(self, me, pitch, ampl, dur, modwheel=0):
+            MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog, me.mw)
             self.pitch = pitch
+            self.ampl = ampl
             self.duration = dur
+            self.modwheel = modwheel
 
     class NoteStream(object):
-        __slots__ = ['history', 'active', 'realpitch']
+        __slots__ = ['history', 'active', 'bentpitch', 'modwheel']
         def __init__(self):
             self.history = []
             self.active = None
-            self.realpitch = None
+            self.bentpitch = None
+            self.modwheel = 0
         def IsActive(self):
             return self.active is not None
-        def Activate(self, mev, realpitch = None):
-            if realpitch is None:
-                realpitch = mev.ev.pitch
+        def Activate(self, mev, bentpitch = None, modwheel = None):
+            if bentpitch is None:
+                bentpitch = mev.ev.pitch
             self.active = mev
-            self.realpitch = realpitch
+            self.bentpitch = bentpitch
+            if modwheel is not None:
+                self.modwheel = modwheel
         def Deactivate(self, mev):
-            self.history.append(DurationEvent(self.active, self.realpitch, mev.abstime - self.active.abstime))
+            self.history.append(DurationEvent(self.active, self.realpitch, self.active.ev.velocity / 127.0, .abstime - self.active.abstime, self.modwheel))
             self.active = None
             self.realpitch = None
         def WouldDeactivate(self, mev):
@@ -311,6 +334,8 @@ for fname in args:
                 return mev.ev.pitch == self.active.ev.pitch and mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
             if isinstance(mev.ev, midi.PitchWheelEvent):
                 return mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
+            if isinstance(mev.ev, midi.ControlChangeEvent):
+                return mev.tidx == self.active.tidx and mev.ev.channel = self.active.ev.channel
             raise TypeError('Tried to deactivate with bad type %r'%(type(mev.ev),))
 
     class NSGroup(object):
@@ -409,6 +434,23 @@ for fname in args:
                         print '    Group %r:'%(group.name,)
                         for stream in group.streams:
                             print '      Stream: %r'%(stream.active,)
+        elif options.modres <= 0 and isinstance(mev.ev, midi.ControlChangeEvent):
+            found = False
+            for group in notegroups:
+                for stream in group.streams:
+                    if stream.WouldDeactivate(mev):
+                        base = stream.active.copy(abstime=mev.abstime)
+                        stream.Deactivate(mev)
+                        stream.Activate(base, stream.bentpitch, mev.mw)
+                        found = True
+            if not found:
+                print 'WARNING: Did not find any matching active streams for %r'%(mev,)
+                if options.verbose:
+                    print '  Current state:'
+                    for group in notegroups:
+                        print '    Group %r:'%(group.name,)
+                        for stream in group.streams:
+                            print '      Stream: %r'%(stream.active,)
         else:
             auxstream.append(mev)
 
@@ -418,7 +460,41 @@ for fname in args:
         for ns in group.streams:
             if ns.IsActive():
                 print 'WARNING: Active notes at end of playback.'
-                ns.Deactivate(MergeEvent(ns.active, ns.active.tidx, lastabstime, 0, 0))
+                ns.Deactivate(MergeEvent(ns.active, ns.active.tidx, lastabstime))
+
+    if options.modres > 0:
+        print 'Resolving modwheel events...'
+        ev_cnt = 0
+        for group in notegroups:
+            for ns in group.streams:
+                i = 0
+                while i < len(ns.history):
+                    dev = ns.history[i]
+                    if dev.modwheel > 0:
+                        realpitch = dev.pitch
+                        realamp = dev.ampl
+                        dt = 0.0
+                        events = []
+                        while dt < dev.duration:
+                            events.append(DurationEvent(dev, realpitch + options.modfdev * math.sin(options.modffreq * (dev.abstime + dt)), realamp + options.modadev * math.sin(options.modafreq * (dev.abstime + dt)), dev.duration, dev.modwheel))
+                            dt += options.modres
+                        ns.history[i:i+1] = events
+                        i += len(events)
+                        ev_cnt += len(events)
+                    else:
+                        i += 1
+        print '...resolved', ev_cnt, 'events'
+
+    if not options.keepempty:
+        print 'Culling empty events...'
+        for group in notegroups:
+            for ns in group.streams:
+                i = 0
+                while i < len(ns.history):
+                    if ns.history[i].duration == 0.0:
+                        del ns.history[i]
+                    else:
+                        i += 1
 
     if options.verbose:
         print 'Final group mappings:'
@@ -455,7 +531,8 @@ for fname in args:
                     for note in ns.history:
                             ivnote = ET.SubElement(ivns, 'note')
                             ivnote.set('pitch', str(note.pitch))
-                            ivnote.set('vel', str(note.ev.velocity))
+                            ivnote.set('vel', str(int(note.ampl * 127.0)))
+                            ivnote.set('ampl', str(note.ampl))
                             ivnote.set('time', str(note.abstime))
                             ivnote.set('dur', str(note.duration))
 

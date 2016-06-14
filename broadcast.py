@@ -26,7 +26,7 @@ parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instru
 parser.add_option('-p', '--play', dest='play', action='append', help='Play a single tone or chord (specified multiple times) on all listening clients (either "midi pitch" or "@frequency")')
 parser.add_option('-P', '--play-async', dest='play_async', action='store_true', help='Don\'t wait for the tone to finish using the local clock')
 parser.add_option('-D', '--duration', dest='duration', type='float', help='How long to play this note for')
-parser.add_option('-V', '--volume', dest='volume', type='int', help='Master volume (0-255)')
+parser.add_option('-V', '--volume', dest='volume', type='float', help='Master volume [0.0, 1.0]')
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
 parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
@@ -41,7 +41,7 @@ parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', hel
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1)
+parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=1.0, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -103,7 +103,7 @@ def gui_pygame():
         idx = 0
         for cli, note in sorted(playing_notes.items(), key = lambda pair: pair[0]):
             pitch = note[0]
-            col = colorsys.hls_to_rgb(float(idx) / len(clients), note[1]/512.0, 1.0)
+            col = colorsys.hls_to_rgb(float(idx) / len(clients), note[1]/2.0, 1.0)
             col = [int(i*255) for i in col]
             disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
             idx += 1
@@ -177,7 +177,7 @@ for cl in clients:
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cl)
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0)), cl)
 
 if options.gui:
     gui_thr = threading.Thread(target=GUIS[options.gui], args=())
@@ -199,7 +199,7 @@ if options.play:
 if options.test and options.sync_test:
     time.sleep(0.25)
     for cl in clients:
-        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
+        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 1.0)), cl)
 
 if options.test or options.quit or options.silence:
     print uid_groups
@@ -270,9 +270,9 @@ if options.live or options.list_live:
                     print 'WARNING: Out of clients to do note %r; dropped'%(event.pitch,)
                     continue
                 cli = sorted(inactive_set)[0]
-                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), 2*event.velocity)), cli)
+                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), event.velocity / 127.0)), cli)
                 active_set.setdefault(event.pitch, []).append(cli)
-                playing_notes[cli] = (event.pitch, 2*event.velocity)
+                playing_notes[cli] = (event.pitch, event.velocity / 127.0)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '+ =>', active_set[event.pitch]
             elif isinstance(event, midi.NoteOffEvent):
@@ -473,15 +473,15 @@ for fname in args:
                     for note in nsq:
                             ttime = float(note.get('time'))
                             pitch = float(note.get('pitch')) + options.transpose
-                            vel = int(note.get('vel'))
+                            ampl = float(note.get('ampl', note.get('vel', 127.0) / 127.0))
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:
                                     self.wait_for(factor*ttime - (time.time() - BASETIME))
                             for cl in cls:
-                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
+                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume)), cl)
                             if options.verbose:
                                 print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-                            playing_notes[cl] = (pitch, vel*2)
+                            playing_notes[cl] = (pitch, ampl)
                             self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
                             playing_notes[cl] = (0, 0)
                     if options.verbose:
