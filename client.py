@@ -24,6 +24,7 @@ parser.add_option('-u', '--uid', dest='uid', default='', help='Set the UID (iden
 parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='Set the port to listen on')
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
+parser.add_option('-n', '--streams', dest='streams', type='int', default=1, help='Set the number of streams this client will play back')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
@@ -33,21 +34,23 @@ parser.add_option('--pg-height', dest='height', type='int', help='Set the height
 options, args = parser.parse_args()
 
 PORT = options.port
-STREAMS = 1
+STREAMS = options.streams
 IDENT = 'TONE'
 UID = options.uid
 
-LAST_SAMP = 0
+LAST_SAMPS = [0] * STREAMS
 LAST_SAMPLES = []
-FREQ = 0
-PHASE = 0
+FREQS = [0] * STREAMS
+PHASES = [0] * STREAMS
 RATE = options.rate
 FPB = 64
 
 Z_SAMP = '\x00\x00\x00\x00'
 MAX = 0x7fffffff
-AMP = MAX
+AMPS = [MAX] * STREAMS
 MIN = -0x80000000
+
+EXPIRATIONS = [0] * STREAMS
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
@@ -100,18 +103,21 @@ def pygame_notes():
     clock = pygame.time.Clock()
 
     while True:
-        if FREQ > 0:
-            try:
-                pitch = 12 * math.log(FREQ / 440.0, 2) + 69
-            except ValueError:
-                pitch = 0
-        else:
-            pitch = 0
-        col = [int((AMP / MAX) * 255)] * 3
-
         disp.fill((0, 0, 0), (BGR_WIDTH, 0, SAMP_WIDTH, HEIGHT))
         disp.scroll(-1, 0)
-        disp.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
+
+        for i in xrange(STREAMS):
+            FREQ = FREQS[i]
+            AMP = AMPS[i]
+            if FREQ > 0:
+                try:
+                    pitch = 12 * math.log(FREQ / 440.0, 2) + 69
+                except ValueError:
+                    pitch = 0
+            else:
+                pitch = 0
+            col = [int((AMP / MAX) * 255)] * 3
+            disp.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
 
         sampwin.scroll(-len(LAST_SAMPLES), 0)
         x = max(0, SAMP_WIDTH - len(LAST_SAMPLES))
@@ -272,9 +278,9 @@ if options.generators:
 #generator = square_wave
 generator = eval(options.generator)
 
-def sigalrm(sig, frm):
-    global FREQ
-    FREQ = 0
+#def sigalrm(sig, frm):
+#    global FREQ
+#    FREQ = 0
 
 def lin_seq(frm, to, cnt):
     step = (to-frm)/float(cnt)
@@ -284,33 +290,44 @@ def lin_seq(frm, to, cnt):
         samps[i] = int(lin_interp(frm, to, p))
     return samps
 
-def samps(freq, phase, cnt):
-    global RATE, AMP
+def samps(freq, amp, phase, cnt):
+    global RATE
     samps = [0]*cnt
     for i in xrange(cnt):
-        samps[i] = int(AMP * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
+        samps[i] = int(amp / float(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
     return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
 
 def to_data(samps):
     return struct.pack('i'*len(samps), *samps)
 
-def gen_data(data, frames, time, status):
-    global FREQ, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES
-    if FREQ == 0:
-        PHASE = 0
-        if LAST_SAMP == 0:
-            if options.gui:
-                LAST_SAMPLES.extend([0]*frames)
-            return (Z_SAMP*frames, pyaudio.paContinue)
-        fdata = lin_seq(LAST_SAMP, 0, frames)
-        if options.gui:
-            LAST_SAMPLES.extend(fdata)
-        LAST_SAMP = fdata[-1]
-        return (to_data(fdata), pyaudio.paContinue)
-    fdata, PHASE = samps(FREQ, PHASE, frames)
+def mix(a, b):
+    return [i + j for i, j in zip(a, b)]
+
+def gen_data(data, frames, tm, status):
+    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES
+    fdata = [0] * frames
+    for i in range(STREAMS):
+        FREQ = FREQS[i]
+        LAST_SAMP = LAST_SAMPS[i]
+        AMP = AMPS[i]
+        EXPIRATION = EXPIRATIONS[i]
+        PHASE = PHASES[i]
+        if FREQ != 0:
+            if time.clock() > EXPIRATION:
+                FREQ = 0
+        if FREQ == 0:
+            PHASES[i] = 0
+            if LAST_SAMP != 0:
+                vdata = lin_seq(LAST_SAMP, 0, frames)
+                fdata = mix(fdata, vdata)
+                LAST_SAMPS[i] = vdata[-1]
+        else:
+            vdata, PHASE = samps(FREQ, AMP, PHASE, frames)
+            fdata = mix(fdata, vdata)
+            PHASES[i] = PHASE
+            LAST_SAMPS[i] = vdata[-1]
     if options.gui:
         LAST_SAMPLES.extend(fdata)
-    LAST_SAMP = fdata[-1]
     return (to_data(fdata), pyaudio.paContinue)
 
 pa = pyaudio.PyAudio()
@@ -335,7 +352,7 @@ if options.test:
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', PORT))
 
-signal.signal(signal.SIGALRM, sigalrm)
+#signal.signal(signal.SIGALRM, sigalrm)
 
 while True:
     data = ''
@@ -353,10 +370,12 @@ while True:
     elif pkt.cmd == CMD.QUIT:
         break
     elif pkt.cmd == CMD.PLAY:
+        voice = pkt.data[4]
         dur = pkt.data[0]+pkt.data[1]/1000000.0
-        FREQ = pkt.data[2]
-        AMP = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
-        signal.setitimer(signal.ITIMER_REAL, dur)
+        FREQS[voice] = pkt.data[2]
+        AMPS[voice] = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
+        EXPIRATIONS[voice] = time.clock() + dur
+        #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8
         data[0] = STREAMS

@@ -36,6 +36,7 @@ parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How
 parser.add_option('-B', '--bind-addr', dest='bind_addr', help='The IP address (or IP:port) to bind to (influences the network to send to)')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='Repeat the file playlist indefinitely')
 parser.add_option('-n', '--number', dest='number', type='int', help='Number of clients to use; if negative (default -1), use the product of stream count and the absolute value of this parameter')
+parser.add_option('--dry', dest='dry', action='store_true', help='Dry run--don\'t actually search for or play to clients, but pretend they exist (useful with -G)')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
@@ -103,7 +104,7 @@ def gui_pygame():
         idx = 0
         for cli, note in sorted(playing_notes.items(), key = lambda pair: pair[0]):
             pitch = note[0]
-            col = colorsys.hls_to_rgb(float(idx) / len(clients), note[1]/2.0, 1.0)
+            col = colorsys.hls_to_rgb(float(idx) / len(targets), note[1]/2.0, 1.0)
             col = [int(i*255) for i in col]
             disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
             idx += 1
@@ -134,22 +135,20 @@ if options.bind_addr:
     s.bind((addr, int(port)))
 
 clients = []
+targets = []
 uid_groups = {}
 type_groups = {}
 
-s.sendto(str(Packet(CMD.PING)), ('255.255.255.255', PORT))
-s.settimeout(options.wait_time)
+if not options.dry:
+    s.sendto(str(Packet(CMD.PING)), ('255.255.255.255', PORT))
+    s.settimeout(options.wait_time)
 
-try:
-	while True:
-		data, src = s.recvfrom(4096)
-		clients.append(src)
-except socket.timeout:
-	pass
-
-playing_notes = {}
-for cli in clients:
-    playing_notes[cli] = (0, 0)
+    try:
+            while True:
+                    data, src = s.recvfrom(4096)
+                    clients.append(src)
+    except socket.timeout:
+            pass
 
 print len(clients), 'detected clients'
 
@@ -178,6 +177,12 @@ for cl in clients:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0)), cl)
+        for i in xrange(pkt.data[0]):
+            targets.append(cl+(i,))
+
+playing_notes = {}
+for tg in targets:
+    playing_notes[tg] = (0, 0)
 
 if options.gui:
     gui_thr = threading.Thread(target=GUIS[options.gui], args=())
@@ -190,16 +195,16 @@ if options.play:
             options.play[i] = int(val[1:])
         else:
             options.play[i] = int(440.0 * 2**((int(val) - 69)/12.0))
-    for i, cl in enumerate(clients):
-        s.sendto(str(Packet(CMD.PLAY, int(options.duration), int(1000000*(options.duration-int(options.duration))), options.play[i%len(options.play)], options.volume)), cl)
+    for i, cl in enumerate(targets):
+        s.sendto(str(Packet(CMD.PLAY, int(options.duration), int(1000000*(options.duration-int(options.duration))), options.play[i%len(options.play)], options.volume, cl[2])), cl[:2])
     if not options.play_async:
         time.sleep(options.duration)
     exit()
 
 if options.test and options.sync_test:
     time.sleep(0.25)
-    for cl in clients:
-        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 1.0)), cl)
+    for cl in targets:
+        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 1.0, cl[2])), cl[:2])
 
 if options.test or options.quit or options.silence:
     print uid_groups
@@ -208,8 +213,8 @@ if options.test or options.quit or options.silence:
 
 if options.random > 0:
     while True:
-        for cl in clients:
-            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), options.volume)), cl)
+        for cl in targets:
+            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), options.volume, cl[2])), cl[:2])
         time.sleep(options.random)
 
 if options.live or options.list_live:
@@ -223,7 +228,7 @@ if options.live or options.list_live:
         print sequencer.SequencerHardware()
         exit()
     seq = sequencer.SequencerRead(sequencer_resolution=120)
-    client_set = set(clients)
+    client_set = set(targets)
     active_set = {} # note (pitch) -> [client]
     deferred_set = set() # pitches held due to sustain
     sustain_status = False
@@ -270,7 +275,7 @@ if options.live or options.list_live:
                     print 'WARNING: Out of clients to do note %r; dropped'%(event.pitch,)
                     continue
                 cli = sorted(inactive_set)[0]
-                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), event.velocity / 127.0)), cli)
+                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), event.velocity / 127.0, cli[2])), cli[:2])
                 active_set.setdefault(event.pitch, []).append(cli)
                 playing_notes[cli] = (event.pitch, event.velocity / 127.0)
                 if options.verbose:
@@ -300,7 +305,7 @@ if options.live or options.list_live:
                                 print 'WARNING: Attempted deferred removal of inactive note %r'%(pitch,)
                                 continue
                             for cli in active_set[pitch]:
-                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0, cli[2])), cli[:2])
                                 playing_notes[cli] = (0, 0)
                             del active_set[pitch]
                         deferred_set.clear()
@@ -322,6 +327,7 @@ for fname in args:
     number = (len(notestreams) * abs(options.number) if options.number < 0 else options.number)
     print len(notestreams), 'notestreams'
     print len(clients), 'clients'
+    print len(targets), 'targets'
     print len(groups), 'groups'
     print number, 'clients used (number)'
 
@@ -360,14 +366,14 @@ for fname in args:
                         raise ValueError('Not an exclusivity: %r'%(part[0],))
             return ret
         def Apply(self, cli):
-            return cli in self.map.get(self.value, [])
+            return cli[:2] in self.map.get(self.value, [])
         def __repr__(self):
             return '<Route of %r to %s:%s>'%(self.group, ('U' if self.map is uid_groups else 'T'), self.value)
 
     class RouteSet(object):
         def __init__(self, clis=None):
             if clis is None:
-                clis = clients[:]
+                clis = targets[:]
             self.clients = clis
             self.routes = []
         def Route(self, stream):
@@ -428,33 +434,6 @@ for fname in args:
             print route
 
     class NSThread(threading.Thread):
-        def drop_missed(self):
-            nsq, cl = self._Thread__args
-            cnt = 0
-            while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
-                nsq.pop(0)
-                cnt += 1
-            if options.verbose:
-                print self, 'dropped', cnt, 'notes due to miss'
-            self._Thread__args = (nsq, cl)
-        def wait_for(self, t):
-            if t <= 0:
-                return
-            time.sleep(t)
-	def run(self):
-		nsq, cl = self._Thread__args
-		for note in nsq:
-			ttime = float(note.get('time'))
-			pitch = int(note.get('pitch')) + options.transpose
-			vel = int(note.get('vel'))
-			dur = factor*float(note.get('dur'))
-			while time.time() - BASETIME < factor*ttime:
-				self.wait_for(factor*ttime - (time.time() - BASETIME))
-			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
-                        if options.verbose:
-                            print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-    class NSThread(threading.Thread):
             def drop_missed(self):
                 nsq, cl = self._Thread__args
                 cnt = 0
@@ -476,9 +455,12 @@ for fname in args:
                             ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:
-                                    self.wait_for(factor*ttime - (time.time() - BASETIME))
-                            for cl in cls:
-                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume)), cl)
+                                self.wait_for(factor*ttime - (time.time() - BASETIME))
+                            if options.dry:
+                                cl = self.ident  # XXX hack
+                            else:
+                                for cl in cls:
+                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
                             if options.verbose:
                                 print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
                             playing_notes[cl] = (pitch, ampl)
@@ -488,15 +470,21 @@ for fname in args:
                         print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
     threads = {}
-    nscycle = itertools.cycle(notestreams)
-    for idx, ns in zip(xrange(number), nscycle):
-        cli = routeset.Route(ns)
-        if cli:
+    if options.dry:
+        for ns in notestreams:
             nsq = ns.findall('note')
-            if ns in threads:
-                threads[ns]._Thread__args[1].add(cli)
-            else:
-                threads[ns] = NSThread(args=(nsq, set([cli])))
+            threads[ns] = NSThread(args=(nsq, set()))
+        targets = threads.values()  # XXX hack
+    else:
+        nscycle = itertools.cycle(notestreams)
+        for idx, ns in zip(xrange(number), nscycle):
+            cli = routeset.Route(ns)
+            if cli:
+                nsq = ns.findall('note')
+                if ns in threads:
+                    threads[ns]._Thread__args[1].add(cli)
+                else:
+                    threads[ns] = NSThread(args=(nsq, set([cli])))
 
     if options.verbose:
         print 'Playback threads:'
