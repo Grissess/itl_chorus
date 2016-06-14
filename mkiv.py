@@ -38,9 +38,10 @@ parser.add_option('--modwheel-freq-freq', dest='modffreq', type='float', help='F
 parser.add_option('--modwheel-amp-dev', dest='modadev', type='float', help='Deviation [0, 1] by which a fully-activated modwheel affects the amplitude as a factor of that amplitude')
 parser.add_option('--modwheel-amp-freq', dest='modafreq', type='float', help='Frequency of modulation periods (sinusoids) of the modwheel acting on amplitude')
 parser.add_option('--modwheel-res', dest='modres', type='float', help='(Fractional) seconds by which to resolve modwheel events (0 to disable)')
+parser.add_option('--modwheel-continuous', dest='modcont', action='store_true', help='Keep phase continuous in global time (don\'t reset to 0 for each note)')
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.01, modfdev=1.0, modffreq=5.0, modadev=0.5, modafreq=5.0)
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -265,16 +266,16 @@ for fname in args:
                 chg_prog[tidx][ev.channel] += 1
             elif isinstance(ev, midi.ControlChangeEvent):
                 if ev.control == 0:  # Bank -- MSB
-                    cur_bank[tidx][ev.channel] = (0x3F80 & cur_bank[tidx][ev.channel]) | ev.value
-                    chg_bank[tidx][ev.channel] += 1
-                elif ev.control == 32:  # Bank -- LSB
                     cur_bank[tidx][ev.channel] = (0x3F & cur_bank[tidx][ev.channel]) | (ev.value << 7)
                     chg_bank[tidx][ev.channel] += 1
+                elif ev.control == 32:  # Bank -- LSB
+                    cur_bank[tidx][ev.channel] = (0x3F80 & cur_bank[tidx][ev.channel]) | ev.value
+                    chg_bank[tidx][ev.channel] += 1
                 elif ev.control == 1:  # ModWheel -- MSB
-                    cur_mw[tidx][ev.channel] = (0x3F80 & cur_mw[tidx][ev.channel]) | ev.value
+                    cur_mw[tidx][ev.channel] = (0x3F & cur_mw[tidx][ev.channel]) | (ev.value << 7)
                     chg_mw[tidx][ev.channel] += 1
                 elif ev.control == 33:  # ModWheel -- LSB
-                    cur_mw[tidx][ev.channel] = (0x3F & cur_mw[tidx][ev.channel]) | (ev.value << 7)
+                    cur_mw[tidx][ev.channel] = (0x3F80 & cur_mw[tidx][ev.channel]) | ev.value
                     chg_mw[tidx][ev.channel] += 1
                 events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
@@ -308,6 +309,9 @@ for fname in args:
             self.duration = dur
             self.modwheel = modwheel
 
+        def __repr__(self):
+            return '<NE %s P:%f A:%f D:%f W:%f>'%(MergeEvent.__repr__(self), self.pitch, self.ampl, self.duration, self.modwheel)
+
     class NoteStream(object):
         __slots__ = ['history', 'active', 'bentpitch', 'modwheel']
         def __init__(self):
@@ -317,7 +321,7 @@ for fname in args:
             self.modwheel = 0
         def IsActive(self):
             return self.active is not None
-        def Activate(self, mev, bentpitch = None, modwheel = None):
+        def Activate(self, mev, bentpitch=None, modwheel=None):
             if bentpitch is None:
                 bentpitch = mev.ev.pitch
             self.active = mev
@@ -328,6 +332,7 @@ for fname in args:
             self.history.append(DurationEvent(self.active, self.bentpitch, self.active.ev.velocity / 127.0, mev.abstime - self.active.abstime, self.modwheel))
             self.active = None
             self.bentpitch = None
+            self.modwheel = 0
         def WouldDeactivate(self, mev):
             if not self.IsActive():
                 return False
@@ -474,28 +479,41 @@ for fname in args:
                     if dev.modwheel > 0:
                         realpitch = dev.pitch
                         realamp = dev.ampl
+                        mwamp = float(dev.modwheel) / 0x3FFF
                         dt = 0.0
                         events = []
                         while dt < dev.duration:
-                            events.append(DurationEvent(dev, realpitch + options.modfdev * math.sin(options.modffreq * (dev.abstime + dt)), realamp + options.modadev * (math.sin(options.modafreq * (dev.abstime + dt)) - 1.0) / 2.0, dev.duration, dev.modwheel))
+                            if options.modcont:
+                                t = dev.abstime + dt
+                            else:
+                                t = dt
+                            events.append(DurationEvent(dev, realpitch + mwamp * options.modfdev * math.sin(2 * math.pi * options.modffreq * t), realamp + mwamp * options.modadev * (math.sin(2 * math.pi * options.modafreq * t) - 1.0) / 2.0, min(dt, dev.duration - dt), dev.modwheel))
                             dt += options.modres
                         ns.history[i:i+1] = events
                         i += len(events)
                         ev_cnt += len(events)
+                        if options.verbose:
+                            print 'Event', i, 'note', dev, 'in group', group.name, 'resolved to', len(events), 'events'
+                            if options.debug:
+                                for ev in events:
+                                    print '\t', ev
                     else:
                         i += 1
         print '...resolved', ev_cnt, 'events'
 
     if not options.keepempty:
         print 'Culling empty events...'
+        ev_cnt = 0
         for group in notegroups:
             for ns in group.streams:
                 i = 0
                 while i < len(ns.history):
                     if ns.history[i].duration == 0.0:
                         del ns.history[i]
+                        ev_cnt += 1
                     else:
                         i += 1
+        print '...culled', ev_cnt, 'events'
 
     if options.verbose:
         print 'Final group mappings:'
