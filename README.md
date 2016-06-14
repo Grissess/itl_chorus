@@ -21,6 +21,16 @@ the machines on a LAN that you would like to beep along, and then run
 `broadcast.py` with the generated interval file on any machine also on that LAN
 (potentially also one of the clients).
 
+# Requirements
+
+At present, `mkiv.py` and "live mode" require [vishnubob's
+python-midi](https://github.com/vishnubob/python-midi) library. I haven't seen
+a way to `easy_install`/`pip` this, so you'll just want to download and install
+this the usual way: `python setup.py` in the cloned directory. On non-Linux
+machines, you should turn off access to the ALSA sequencer; instructions on
+doing so are on that project page. Note that live mode will not function on
+these platforms.
+
 # Troubleshooting
 
 In my experience, the most annoying errors come about as the following:
