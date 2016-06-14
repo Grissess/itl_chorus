@@ -355,7 +355,7 @@ while True:
     elif pkt.cmd == CMD.PLAY:
         dur = pkt.data[0]+pkt.data[1]/1000000.0
         FREQ = pkt.data[2]
-        AMP = MAX * (pkt.as_float(3))
+        AMP = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
         signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8

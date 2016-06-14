@@ -15,6 +15,7 @@ import midi
 import sys
 import os
 import optparse
+import math
 
 TRACKS = object()
 PROGRAMS = object()
@@ -286,9 +287,9 @@ for fname in args:
                 ev_cnts[tidx][ev.channel] += 1
 
     if options.verbose:
-        print 'Track name, event count, final banks, bank changes, final programs, program changes:'
+        print 'Track name, event count, final banks, bank changes, final programs, program changes, final modwheel, modwheel changes:'
         for tidx, tname in enumerate(tnames):
-            print tidx, ':', tname, ',', ','.join(map(str, ev_cnts[tidx])), ',', ','.join(map(str, cur_bank[tidx])), ',', ','.join(map(str, chg_bank[tidx])), ',', ','.join(map(str, cur_prog[tidx])), ',', ','.join(map(str, chg_prog[tidx]))
+            print tidx, ':', tname, ',', ','.join(map(str, ev_cnts[tidx])), ',', ','.join(map(str, cur_bank[tidx])), ',', ','.join(map(str, chg_bank[tidx])), ',', ','.join(map(str, cur_prog[tidx])), ',', ','.join(map(str, chg_prog[tidx])), ',', ','.join(map(str, cur_mw[tidx])), ',', ','.join(map(str, chg_mw[tidx]))
         print 'All programs observed:', progs
 
     print 'Sorting events...'
@@ -324,9 +325,9 @@ for fname in args:
             if modwheel is not None:
                 self.modwheel = modwheel
         def Deactivate(self, mev):
-            self.history.append(DurationEvent(self.active, self.realpitch, self.active.ev.velocity / 127.0, .abstime - self.active.abstime, self.modwheel))
+            self.history.append(DurationEvent(self.active, self.bentpitch, self.active.ev.velocity / 127.0, mev.abstime - self.active.abstime, self.modwheel))
             self.active = None
-            self.realpitch = None
+            self.bentpitch = None
         def WouldDeactivate(self, mev):
             if not self.IsActive():
                 return False
@@ -335,7 +336,7 @@ for fname in args:
             if isinstance(mev.ev, midi.PitchWheelEvent):
                 return mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
             if isinstance(mev.ev, midi.ControlChangeEvent):
-                return mev.tidx == self.active.tidx and mev.ev.channel = self.active.ev.channel
+                return mev.tidx == self.active.tidx and mev.ev.channel == self.active.ev.channel
             raise TypeError('Tried to deactivate with bad type %r'%(type(mev.ev),))
 
     class NSGroup(object):
@@ -434,7 +435,7 @@ for fname in args:
                         print '    Group %r:'%(group.name,)
                         for stream in group.streams:
                             print '      Stream: %r'%(stream.active,)
-        elif options.modres <= 0 and isinstance(mev.ev, midi.ControlChangeEvent):
+        elif options.modres > 0 and isinstance(mev.ev, midi.ControlChangeEvent):
             found = False
             for group in notegroups:
                 for stream in group.streams:
@@ -476,7 +477,7 @@ for fname in args:
                         dt = 0.0
                         events = []
                         while dt < dev.duration:
-                            events.append(DurationEvent(dev, realpitch + options.modfdev * math.sin(options.modffreq * (dev.abstime + dt)), realamp + options.modadev * math.sin(options.modafreq * (dev.abstime + dt)), dev.duration, dev.modwheel))
+                            events.append(DurationEvent(dev, realpitch + options.modfdev * math.sin(options.modffreq * (dev.abstime + dt)), realamp + options.modadev * (math.sin(options.modafreq * (dev.abstime + dt)) - 1.0) / 2.0, dev.duration, dev.modwheel))
                             dt += options.modres
                         ns.history[i:i+1] = events
                         i += len(events)

@@ -473,7 +473,7 @@ for fname in args:
                     for note in nsq:
                             ttime = float(note.get('time'))
                             pitch = float(note.get('pitch')) + options.transpose
-                            ampl = float(note.get('ampl', note.get('vel', 127.0) / 127.0))
+                            ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:
                                     self.wait_for(factor*ttime - (time.time() - BASETIME))
