@@ -317,30 +317,48 @@ if options.repeat:
 
 for fname in args:
     if options.pcm and not fname.endswith('.iv'):
-        try:
-            import audiotools
-            pcr = audiotools.open(fname).to_pcm()
-            assert pcr.channels == 1 and pcr.bits_per_sample == 16 and pcr.sample_rate == 44100
-        except ImportError:
+        if fname == '-':
             import wave
-            pcr = wave.open(fname, 'r')
-            assert pcr.getnchannels() == 1 and pcr.getsampwidth() == 2 and pcr.getframerate() == 44100
+            pcr = wave.open(sys.stdin)
+            samprate = pcr.getframerate()
+            pcr.read = pcr.readframes
+        else:
+            try:
+                import audiotools
+                pcr = audiotools.open(fname).to_pcm()
+                assert pcr.channels == 1 and pcr.bits_per_sample == 16 and pcr.sample_rate == 44100
+                samprate = pcr.sample_rate
+            except ImportError:
+                import wave
+                pcr = wave.open(fname, 'r')
+                assert pcr.getnchannels() == 1 and pcr.getsampwidth() == 2 and pcr.getframerate() == 44100
+                samprate = pcr.getframerate()
+                pcr.read = pcr.readframes
+
+        def read_all(fn, n):
+            buf = ''
+            while len(buf) < n:
+                nbuf = fn.read(n - len(buf))
+                if not isinstance(nbuf, str):
+                    nbuf = nbuf.to_bytes(False, True)
+                buf += nbuf
+            return buf
 
         BASETIME = time.time() - options.pcmlead
         sampcnt = 0
-        buf = pcr.read(16).to_bytes(False, True)
-        while buf:
+        buf = read_all(pcr, 16)
+        while len(buf) >= 32:
             frag = buf[:32]
             buf = buf[32:]
             for cl in clients:
                 s.sendto(struct.pack('>L', CMD.PCM) + frag, cl)
             sampcnt += len(frag) / 2
-            delay = max(0, BASETIME + (sampcnt / float(pcr.sample_rate)) - time.time())
+            delay = max(0, BASETIME + (sampcnt / float(samprate)) - time.time())
             #print sampcnt, delay
             if delay > 0:
                 time.sleep(delay)
-            if not buf:
-                buf = pcr.read(16).to_bytes(False, True)
+            if len(buf) < 32:
+                buf += read_all(pcr, 16)
     try:
         iv = ET.parse(fname).getroot()
     except IOError:
