@@ -25,6 +25,7 @@ parser.add_option('-p', '--port', dest='port', type='int', default=13676, help='
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Set the sample rate of the audio device')
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
 parser.add_option('-n', '--streams', dest='streams', type='int', default=1, help='Set the number of streams this client will play back')
+parser.add_option('-N', '--numpy', dest='numpy', action='store_true', help='Use numpy acceleration')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
@@ -32,6 +33,9 @@ parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the 
 parser.add_option('--pg-height', dest='height', type='int', help='Set the height of the window or full-screen video mode')
 
 options, args = parser.parse_args()
+
+if options.numpy:
+    import numpy
 
 PORT = options.port
 STREAMS = options.streams
@@ -51,6 +55,7 @@ AMPS = [MAX] * STREAMS
 MIN = -0x80000000
 
 EXPIRATIONS = [0] * STREAMS
+QUEUED_PCM = ''
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
@@ -282,30 +287,57 @@ generator = eval(options.generator)
 #    global FREQ
 #    FREQ = 0
 
-def lin_seq(frm, to, cnt):
-    step = (to-frm)/float(cnt)
-    samps = [0]*cnt
-    for i in xrange(cnt):
-        p = i / float(cnt-1)
-        samps[i] = int(lin_interp(frm, to, p))
-    return samps
+if options.numpy:
+    lin_seq = numpy.linspace
 
-def samps(freq, amp, phase, cnt):
-    global RATE
-    samps = [0]*cnt
-    for i in xrange(cnt):
-        samps[i] = int(amp / math.sqrt(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
-    return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
+    def samps(freq, amp, phase, cnt):
+        samps = numpy.ndarray((cnt,), numpy.int32)
+        pvel = 2 * math.pi * freq / RATE
+        fac = amp / float(STREAMS)
+        for i in xrange(cnt):
+            samps[i] = fac * max(-1, min(1, generator(phase)))
+            phase = (phase + pvel) % (2 * math.pi)
+        return samps, phase
 
-def to_data(samps):
-    return struct.pack('i'*len(samps), *samps)
+    def to_data(samps):
+        return samps.tobytes()
 
-def mix(a, b):
-    return [min(MAX, max(MIN, i + j)) for i, j in zip(a, b)]
+    def mix(a, b):
+        return a + b
+
+else:
+    def lin_seq(frm, to, cnt):
+        step = (to-frm)/float(cnt)
+        samps = [0]*cnt
+        for i in xrange(cnt):
+            p = i / float(cnt-1)
+            samps[i] = int(lin_interp(frm, to, p))
+        return samps
+
+    def samps(freq, amp, phase, cnt):
+        global RATE
+        samps = [0]*cnt
+        for i in xrange(cnt):
+            samps[i] = int(amp / math.sqrt(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
+        return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
+
+    def to_data(samps):
+        return struct.pack('i'*len(samps), *samps)
+
+    def mix(a, b):
+        return [min(MAX, max(MIN, i + j)) for i, j in zip(a, b)]
 
 def gen_data(data, frames, tm, status):
-    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES
-    fdata = [0] * frames
+    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM
+    if len(QUEUED_PCM) >= frames*4:
+        fdata = QUEUED_PCM[:frames*4]
+        QUEUED_PCM = QUEUED_PCM[frames*4:]
+        LAST_SAMPLES.extend(struct.unpack(str(frames)+'i', fdata))
+        return fdata, pyaudio.paContinue
+    if options.numpy:
+        fdata = numpy.zeros((frames,), numpy.int32)
+    else:
+        fdata = [0] * frames
     for i in range(STREAMS):
         FREQ = FREQS[i]
         LAST_SAMP = LAST_SAMPS[i]
@@ -384,5 +416,10 @@ while True:
         for i in xrange(len(UID)/4):
             data[i+2] = stoi(UID[4*i:4*(i+1)])
         sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
+    elif pkt.cmd == CMD.PCM:
+        fdata = data[4:]
+        fdata = struct.pack('16i', *[i<<16 for i in struct.unpack('16h', fdata)])
+        QUEUED_PCM += fdata
+        print 'Now', len(QUEUED_PCM) / 4.0, 'frames queued'
     else:
         print 'Unknown cmd', pkt.cmd

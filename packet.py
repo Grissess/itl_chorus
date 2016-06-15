@@ -24,6 +24,7 @@ class CMD:
 	QUIT = 2 # No important data
 	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0.0 - 1.0), port
         CAPS = 4 # ports, client type (1), user ident (2-7)
+        PCM = 5 # 16 samples, encoded S16_LE
 
 def itos(i):
     return struct.pack('>L', i)

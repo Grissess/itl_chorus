@@ -37,12 +37,14 @@ parser.add_option('-B', '--bind-addr', dest='bind_addr', help='The IP address (o
 parser.add_option('--repeat', dest='repeat', action='store_true', help='Repeat the file playlist indefinitely')
 parser.add_option('-n', '--number', dest='number', type='int', help='Number of clients to use; if negative (default -1), use the product of stream count and the absolute value of this parameter')
 parser.add_option('--dry', dest='dry', action='store_true', help='Dry run--don\'t actually search for or play to clients, but pretend they exist (useful with -G)')
+parser.add_option('--pcm', dest='pcm', action='store_true', help='Use experimental PCM rendering')
+parser.add_option('--pcm-lead', dest='pcmlead', type='float', help='Seconds of leading PCM data to send')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=1.0, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1)
+parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=1.0, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -314,6 +316,31 @@ if options.repeat:
     args = itertools.cycle(args)
 
 for fname in args:
+    if options.pcm and not fname.endswith('.iv'):
+        try:
+            import audiotools
+            pcr = audiotools.open(fname).to_pcm()
+            assert pcr.channels == 1 and pcr.bits_per_sample == 16 and pcr.sample_rate == 44100
+        except ImportError:
+            import wave
+            pcr = wave.open(fname, 'r')
+            assert pcr.getnchannels() == 1 and pcr.getsampwidth() == 2 and pcr.getframerate() == 44100
+
+        BASETIME = time.time() - options.pcmlead
+        sampcnt = 0
+        buf = pcr.read(16).to_bytes(False, True)
+        while buf:
+            frag = buf[:32]
+            buf = buf[32:]
+            for cl in clients:
+                s.sendto(struct.pack('>L', CMD.PCM) + frag, cl)
+            sampcnt += len(frag) / 2
+            delay = max(0, BASETIME + (sampcnt / float(pcr.sample_rate)) - time.time())
+            #print sampcnt, delay
+            if delay > 0:
+                time.sleep(delay)
+            if not buf:
+                buf = pcr.read(16).to_bytes(False, True)
     try:
         iv = ET.parse(fname).getroot()
     except IOError:
