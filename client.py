@@ -288,7 +288,8 @@ generator = eval(options.generator)
 #    FREQ = 0
 
 if options.numpy:
-    lin_seq = numpy.linspace
+    def lin_seq(frm, to, cnt):
+        return numpy.linspace(frm, to, cnt, dtype=numpy.int32)
 
     def samps(freq, amp, phase, cnt):
         samps = numpy.ndarray((cnt,), numpy.int32)
@@ -318,7 +319,7 @@ else:
         global RATE
         samps = [0]*cnt
         for i in xrange(cnt):
-            samps[i] = int(amp / math.sqrt(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
+            samps[i] = int(2*amp / float(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
         return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
 
     def to_data(samps):
@@ -345,7 +346,7 @@ def gen_data(data, frames, tm, status):
         EXPIRATION = EXPIRATIONS[i]
         PHASE = PHASES[i]
         if FREQ != 0:
-            if time.clock() > EXPIRATION:
+            if time.time() > EXPIRATION:
                 FREQ = 0
                 FREQS[i] = 0
         if FREQ == 0:
@@ -407,7 +408,7 @@ while True:
         dur = pkt.data[0]+pkt.data[1]/1000000.0
         FREQS[voice] = pkt.data[2]
         AMPS[voice] = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
-        EXPIRATIONS[voice] = time.clock() + dur
+        EXPIRATIONS[voice] = time.time() + dur
         #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8
