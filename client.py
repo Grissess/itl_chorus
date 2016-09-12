@@ -294,7 +294,7 @@ if options.numpy:
     def samps(freq, amp, phase, cnt):
         samps = numpy.ndarray((cnt,), numpy.int32)
         pvel = 2 * math.pi * freq / RATE
-        fac = amp / float(STREAMS)
+        fac = options.volume * amp / float(STREAMS)
         for i in xrange(cnt):
             samps[i] = fac * max(-1, min(1, generator(phase)))
             phase = (phase + pvel) % (2 * math.pi)
@@ -414,7 +414,7 @@ while True:
         data = [0] * 8
         data[0] = STREAMS
         data[1] = stoi(IDENT)
-        for i in xrange(len(UID)/4):
+        for i in xrange(len(UID)/4 + 1):
             data[i+2] = stoi(UID[4*i:4*(i+1)])
         sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
     elif pkt.cmd == CMD.PCM:

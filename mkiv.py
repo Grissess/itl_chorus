@@ -39,9 +39,16 @@ parser.add_option('--modwheel-amp-dev', dest='modadev', type='float', help='Devi
 parser.add_option('--modwheel-amp-freq', dest='modafreq', type='float', help='Frequency of modulation periods (sinusoids) of the modwheel acting on amplitude')
 parser.add_option('--modwheel-res', dest='modres', type='float', help='(Fractional) seconds by which to resolve modwheel events (0 to disable)')
 parser.add_option('--modwheel-continuous', dest='modcont', action='store_true', help='Keep phase continuous in global time (don\'t reset to 0 for each note)')
+parser.add_option('--string-res', dest='stringres', type='float', help='(Fractional) seconds by which to resolve string models (0 to disable)')
+parser.add_option('--string-max', dest='stringmax', type='int', help='Maximum number of events to generate per single input event')
+parser.add_option('--string-rate-on', dest='stringonrate', type='float', help='Rate (amplitude / sec) by which to exponentially decay in the string model while a note is active')
+parser.add_option('--string-rate-off', dest='stringoffrate', type='float', help='Rate (amplitude / sec) by which to exponentially decay in the string model after a note ends')
+parser.add_option('--string-threshold', dest='stringthres', type='float', help='Amplitude (as fraction of original) at which point the string model event is terminated')
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
+parser.add_option('--epsilon', dest='epsilon', type='float', help='Don\'t consider overlaps smaller than this number of seconds (which regularly happen due to precision loss)')
+parser.add_option('--vol-pow', dest='vol_pow', type='float', help='Exponent to raise volume changes (adjusts energy per delta volume)')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0)
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.01, stringthres=0.02, epsilon=1e-12, vol_pow=2)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -238,6 +245,8 @@ for fname in args:
         def __repr__(self):
             return '<ME %r in %d on (%d:%d) MW:%d @%f>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime)
 
+    vol_at = [[{0: 0x3FFF} for i in range(16)] for j in range(len(pat))]
+
     events = []
     cur_mw = [[0 for i in range(16)] for j in range(len(pat))]
     cur_bank = [[0 for i in range(16)] for j in range(len(pat))]
@@ -245,6 +254,7 @@ for fname in args:
     chg_mw = [[0 for i in range(16)] for j in range(len(pat))]
     chg_bank = [[0 for i in range(16)] for j in range(len(pat))]
     chg_prog = [[0 for i in range(16)] for j in range(len(pat))]
+    chg_vol = [[0 for i in range(16)] for j in range(len(pat))]
     ev_cnts = [[0 for i in range(16)] for j in range(len(pat))]
     tnames = [''] * len(pat)
     progs = set([0])
@@ -277,6 +287,14 @@ for fname in args:
                 elif ev.control == 33:  # ModWheel -- LSB
                     cur_mw[tidx][ev.channel] = (0x3F80 & cur_mw[tidx][ev.channel]) | ev.value
                     chg_mw[tidx][ev.channel] += 1
+                elif ev.control == 7:  # Volume -- MSB
+                    lvtime, lvol = sorted(vol_at[tidx][ev.channel].items(), key = lambda pair: pair[0])[-1]
+                    vol_at[tidx][ev.channel][abstime] = (0x3F & lvol) | (ev.value << 7)
+                    chg_vol[tidx][ev.channel] += 1
+                elif ev.control == 39:  # Volume -- LSB
+                    lvtime, lvol = sorted(vol_at[tidx][ev.channel].items(), key = lambda pair: pair[0])[-1]
+                    vol_at[tidx][ev.channel][abstime] = (0x3F80 & lvol) | ev.value
+                    chg_vol[tidx][ev.channel] += 1
                 events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
             elif isinstance(ev, midi.MetaEventWithText):
@@ -287,11 +305,10 @@ for fname in args:
                 events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
                 ev_cnts[tidx][ev.channel] += 1
 
-    if options.verbose:
-        print 'Track name, event count, final banks, bank changes, final programs, program changes, final modwheel, modwheel changes:'
-        for tidx, tname in enumerate(tnames):
-            print tidx, ':', tname, ',', ','.join(map(str, ev_cnts[tidx])), ',', ','.join(map(str, cur_bank[tidx])), ',', ','.join(map(str, chg_bank[tidx])), ',', ','.join(map(str, cur_prog[tidx])), ',', ','.join(map(str, chg_prog[tidx])), ',', ','.join(map(str, cur_mw[tidx])), ',', ','.join(map(str, chg_mw[tidx]))
-        print 'All programs observed:', progs
+    print 'Track name, event count, final banks, bank changes, final programs, program changes, final modwheel, modwheel changes, volume changes:'
+    for tidx, tname in enumerate(tnames):
+        print tidx, ':', tname, ',', ','.join(map(str, ev_cnts[tidx])), ',', ','.join(map(str, cur_bank[tidx])), ',', ','.join(map(str, chg_bank[tidx])), ',', ','.join(map(str, cur_prog[tidx])), ',', ','.join(map(str, chg_prog[tidx])), ',', ','.join(map(str, cur_mw[tidx])), ',', ','.join(map(str, chg_mw[tidx])), ',', ','.join(map(str, chg_vol[tidx]))
+    print 'All programs observed:', progs
 
     print 'Sorting events...'
 
@@ -481,13 +498,15 @@ for fname in args:
                         realamp = dev.ampl
                         mwamp = float(dev.modwheel) / 0x3FFF
                         dt = 0.0
+                        origtime = dev.abstime
                         events = []
                         while dt < dev.duration:
+                            dev.abstime = origtime + dt
                             if options.modcont:
-                                t = dev.abstime + dt
+                                t = origtime
                             else:
                                 t = dt
-                            events.append(DurationEvent(dev, realpitch + mwamp * options.modfdev * math.sin(2 * math.pi * options.modffreq * t), realamp + mwamp * options.modadev * (math.sin(2 * math.pi * options.modafreq * t) - 1.0) / 2.0, min(dt, dev.duration - dt), dev.modwheel))
+                            events.append(DurationEvent(dev, realpitch + mwamp * options.modfdev * math.sin(2 * math.pi * options.modffreq * t), realamp + mwamp * options.modadev * (math.sin(2 * math.pi * options.modafreq * t) - 1.0) / 2.0, min(options.modres, dev.duration - dt), dev.modwheel))
                             dt += options.modres
                         ns.history[i:i+1] = events
                         i += len(events)
@@ -500,6 +519,95 @@ for fname in args:
                     else:
                         i += 1
         print '...resolved', ev_cnt, 'events'
+
+    if options.stringres:
+        print 'Resolving string models...'
+        st_cnt = sum(sum(len(ns.history) for ns in group.streams) for group in notegroups)
+        in_cnt = 0
+        ex_cnt = 0
+        ev_cnt = 0
+        dev_grps = []
+        for group in notegroups:
+            for ns in group.streams:
+                i = 0
+                while i < len(ns.history):
+                    dev = ns.history[i]
+                    ntime = float('inf')
+                    if i + 1 < len(ns.history):
+                        ntime = ns.history[i+1].abstime
+                    dt = 0.0
+                    ampf = 1.0
+                    origtime = dev.abstime
+                    events = []
+                    while dt < dev.duration and ampf * dev.ampl >= options.stringthres:
+                        dev.abstime = origtime + dt
+                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, min(options.stringres, dev.duration - dt), dev.modwheel))
+                        if len(events) > options.stringmax:
+                            print 'WARNING: Exceeded maximum string model events for event', i
+                            if options.verbose:
+                                print 'Final ampf', ampf, 'dt', dt
+                            break
+                        ampf *= options.stringrateon ** options.stringres
+                        dt += options.stringres
+                        in_cnt += 1
+                    dt = dev.duration
+                    while ampf * dev.ampl >= options.stringthres:
+                        dev.abstime = origtime + dt
+                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, options.stringres, dev.modwheel))
+                        if len(events) > options.stringmax:
+                            print 'WARNING: Exceeded maximum string model events for event', i
+                            if options.verbose:
+                                print 'Final ampf', ampf, 'dt', dt
+                            break
+                        ampf *= options.stringrateoff ** options.stringres
+                        dt += options.stringres
+                        ex_cnt += 1
+                    if events:
+                        for j in xrange(len(events) - 1):
+                            cur, next = events[j], events[j + 1]
+                            if abs(cur.abstime + cur.duration - next.abstime) > options.epsilon:
+                                print 'WARNING: String model events cur: ', cur, 'next:', next, 'have gap/overrun of', next.abstime - (cur.abstime + cur.duration)
+                        dev_grps.append(events)
+                    else:
+                        print 'WARNING: Event', i, 'note', dev, ': No events?'
+                    if options.verbose:
+                        print 'Event', i, 'note', dev, 'in group', group.name, 'resolved to', len(events), 'events'
+                        if options.debug:
+                            for ev in events:
+                                print '\t', ev
+                    i += 1
+                    ev_cnt += len(events)
+        print '...resolved', ev_cnt, 'events (+', ev_cnt - st_cnt, ',', in_cnt, 'inside', ex_cnt, 'extra), resorting streams...'
+        for group in notegroups:
+            group.streams = []
+
+        dev_grps.sort(key = lambda evg: evg[0].abstime)
+        for devgr in dev_grps:
+            dev = devgr[0]
+            for group in notegroups:
+                if group.filter(dev):
+                    grp = group
+                    break
+            else:
+                grp = NSGroup()
+                notegroups.append(grp)
+            for ns in grp.streams:
+                if not ns.history:
+                    ns.history.extend(devgr)
+                    break
+                last = ns.history[-1]
+                if dev.abstime >= last.abstime + last.duration - 1e-3:
+                    ns.history.extend(devgr)
+                    break
+            else:
+                ns = NoteStream()
+                grp.streams.append(ns)
+                ns.history.extend(devgr)
+        scnt = 0
+        for group in notegroups:
+            for ns in group.streams:
+                scnt += 1
+        print 'Final sort:', len(notegroups), 'groups with', scnt, 'streams'
 
     if not options.keepempty:
         print 'Culling empty events...'
@@ -519,6 +627,33 @@ for fname in args:
         print 'Final group mappings:'
         for group in notegroups:
             print ('<anonymous>' if group.name is None else group.name), '<=', '(', len(group.streams), 'streams)'
+
+    print 'Final volume resolution...'
+    for group in notegroups:
+        for ns in group.streams:
+            for ev in ns.history:
+                t, vol = sorted(filter(lambda pair: pair[0] <= ev.abstime, vol_at[ev.tidx][ev.ev.channel].items()), key=lambda pair: pair[0])[-1]
+                ev.ampl *= (float(vol) / 0x3FFF) ** options.vol_pow
+
+    print 'Checking consistency...'
+    for group in notegroups:
+        if options.verbose:
+            print 'Group', '<None>' if group.name is None else group.name, 'with', len(group.streams), 'streams...',
+        ecnt = 0
+        for ns in group.streams:
+            for i in xrange(len(ns.history) - 1):
+                cur, next = ns.history[i], ns.history[i + 1]
+                if cur.abstime + cur.duration > next.abstime + options.epsilon:
+                    print 'WARNING: event', i, 'collides with next event (@', cur.abstime, '+', cur.duration, 'next @', next.abstime, ';', next.abstime - (cur.abstime + cur.duration), 'overlap)'
+                    ecnt += 1
+                if cur.abstime > next.abstime:
+                    print 'WARNING: event', i + 1, 'out of sort order (@', cur.abstime, 'next @', next.abstime, ';', cur.abstime - next.abstime, 'underlap)'
+                    ecnt += 1
+        if options.verbose:
+            if ecnt > 0:
+                print '...', ecnt, 'errors occured'
+            else:
+                print 'ok'
 
     print 'Generated %d streams in %d groups'%(sum(map(lambda x: len(x.streams), notegroups)), len(notegroups))
     print 'Playtime:', lastabstime, 'seconds'
@@ -557,7 +692,12 @@ for fname in args:
 
     ivtext = ET.SubElement(ivstreams, 'stream', type='text')
     for tev in textstream:
-        ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=tev.ev.text)
+        text = tev.ev.text
+        # XXX Codec woes and general ET silliness
+        text = text.replace('\0', '')
+        #text = text.decode('latin_1')
+        #text = text.encode('ascii', 'replace')
+        ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=text)
 
     ivaux = ET.SubElement(ivstreams, 'stream')
     ivaux.set('type', 'aux')
@@ -571,4 +711,5 @@ for fname in args:
         ivev.set('data', repr(fw.encode_midi_event(mev.ev)))
 
     print 'Done.'
-    open(os.path.splitext(os.path.basename(fname))[0]+'.iv', 'w').write(ET.tostring(iv))
+    txt = ET.tostring(iv, 'UTF-8')
+    open(os.path.splitext(os.path.basename(fname))[0]+'.iv', 'wb').write(txt)

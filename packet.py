@@ -27,7 +27,7 @@ class CMD:
         PCM = 5 # 16 samples, encoded S16_LE
 
 def itos(i):
-    return struct.pack('>L', i)
+    return struct.pack('>L', i).rstrip('\0')
 
 def stoi(s):
-    return struct.unpack('>L', s)[0]
+    return struct.unpack('>L', s.ljust(4, '\0'))[0]
