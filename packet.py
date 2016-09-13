@@ -31,3 +31,5 @@ def itos(i):
 
 def stoi(s):
     return struct.unpack('>L', s.ljust(4, '\0'))[0]
+
+OBLIGATE_POLYPHONE = 0xffffffff

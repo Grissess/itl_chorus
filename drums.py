@@ -7,7 +7,7 @@ import cStringIO as StringIO
 import array
 import time
 
-from packet import Packet, CMD, stoi
+from packet import Packet, CMD, stoi, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='As a test, play all samples then exit')
@@ -161,12 +161,12 @@ while True:
             dframes = max(dframes, rframes)
         if not options.cut:
             dframes = rframes * ((dframes + rframes - 1) / rframes)
-        amp = max(min(pkt.as_float(3), 1.0), 0.0)
+        amp = max(min(options.volume * pkt.as_float(3), 1.0), 0.0)
         PLAYING.add(SampleReader(rdata, dframes * 4, amp))
         #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8
-        data[0] = 255  # XXX More ports? Less?
+        data[0] = OBLIGATE_POLYPHONE
         data[1] = stoi(IDENT)
         for i in xrange(len(options.uid)/4 + 1):
             data[i+2] = stoi(options.uid[4*i:4*(i+1)])

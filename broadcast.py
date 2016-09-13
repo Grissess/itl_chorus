@@ -9,7 +9,7 @@ import optparse
 import random
 import itertools
 
-from packet import Packet, CMD, itos
+from packet import Packet, CMD, itos, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
@@ -147,6 +147,7 @@ clients = set()
 targets = set()
 uid_groups = {}
 type_groups = {}
+ports = {}
 
 if not options.dry:
     s.settimeout(options.wait_time)
@@ -170,6 +171,7 @@ for num in xrange(options.tries):
         data, _ = s.recvfrom(4096)
         pkt = Packet.FromStr(data)
         print 'ports', pkt.data[0],
+        ports[cl] = pkt.data[0]
         tp = itos(pkt.data[1])
         print 'type', tp,
         uid = ''.join([itos(i) for i in pkt.data[2:]]).rstrip('\x00')
@@ -188,6 +190,8 @@ for num in xrange(options.tries):
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
                 s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0)), cl)
+        if pkt.data[0] == OBLIGATE_POLYPHONE:
+            pkt.data[0] = 1
         for i in xrange(pkt.data[0]):
             targets.add(cl+(i,))
 
@@ -445,7 +449,8 @@ for fname in args:
                     if matches:
                         if options.verbose:
                             print '\tUsing client', matches[0]
-                        self.clients.remove(matches[0])
+                        if ports.get(matches[0][:2]) != OBLIGATE_POLYPHONE:
+                            self.clients.remove(matches[0])
                         return matches[0]
                     if options.verbose:
                         print '\tNo matches, moving on...'
@@ -469,7 +474,8 @@ for fname in args:
                     print '\tOut of clients, no route matched.'
                 return None
             cli = list(testset)[0]
-            self.clients.remove(cli)
+            if ports.get(cli[:2]) != OBLIGATE_POLYPHONE:
+                self.clients.remove(cli)
             if options.verbose:
                 print '\tDefault route to', cli
             return cli
