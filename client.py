@@ -31,6 +31,10 @@ parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', hel
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
 parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the width of the bargraph pane (by default display width / 2)')
 parser.add_option('--pg-height', dest='height', type='int', help='Set the height of the window or full-screen video mode')
+parser.add_option('--pg-no-colback', dest='no_colback', action='store_true', help='Don\'t render a colored background')
+parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help='Low frequency for colored background')
+parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
+parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
 
 options, args = parser.parse_args()
 
@@ -72,6 +76,7 @@ def GUI(f):
 def pygame_notes():
     import pygame
     import pygame.gfxdraw
+    import colorsys
     pygame.init()
 
     dispinfo = pygame.display.Info()
@@ -103,14 +108,37 @@ def pygame_notes():
     PFAC = HEIGHT / 128.0
 
     sampwin = pygame.Surface((SAMP_WIDTH, HEIGHT))
+    sampwin.set_colorkey((0, 0, 0))
     lastsy = HEIGHT / 2
+    bgrwin = pygame.Surface((BGR_WIDTH, HEIGHT))
+    bgrwin.set_colorkey((0, 0, 0))
 
     clock = pygame.time.Clock()
 
     while True:
-        disp.fill((0, 0, 0), (BGR_WIDTH, 0, SAMP_WIDTH, HEIGHT))
-        disp.scroll(-1, 0)
+        if options.no_colback:
+            disp.fill((0, 0, 0), (0, 0, WIDTH, HEIGHT))
+        else:
+            gap = WIDTH / STREAMS
+            for i in xrange(STREAMS):
+                FREQ = FREQS[i]
+                AMP = AMPS[i]
+                if FREQ > 0:
+                    pitchval = float(FREQ - options.low_freq) / (options.high_freq - options.low_freq)
+                    if options.log_base == 0:
+                        try:
+                            pitchval = math.log(pitchval) / math.log(options.log_base)
+                        except ValueError:
+                            pass
+                    bgcol = colorsys.hls_to_rgb(min((1.0, max((0.0, pitchval)))), 0.5 * ((AMP / float(MAX)) ** 2), 1.0)
+                    bgcol = [int(j*255) for j in bgcol]
+                else:
+                    bgcol = (0, 0, 0)
+                #print i, ':', pitchval
+                disp.fill(bgcol, (i*gap, 0, gap, HEIGHT))
 
+        bgrwin.scroll(-1, 0)
+        bgrwin.fill((0, 0, 0), (BGR_WIDTH - 1, 0, 1, HEIGHT))
         for i in xrange(STREAMS):
             FREQ = FREQS[i]
             AMP = AMPS[i]
@@ -122,7 +150,7 @@ def pygame_notes():
             else:
                 pitch = 0
             col = [int((AMP / MAX) * 255)] * 3
-            disp.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
+            bgrwin.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
 
         sampwin.scroll(-len(LAST_SAMPLES), 0)
         x = max(0, SAMP_WIDTH - len(LAST_SAMPLES))
@@ -143,6 +171,7 @@ def pygame_notes():
         #        break
         #if len(pts) > 2:
         #    pygame.gfxdraw.aapolygon(disp, pts, [0, 255, 0])
+        disp.blit(bgrwin, (0, 0))
         disp.blit(sampwin, (BGR_WIDTH, 0))
         pygame.display.flip()
 

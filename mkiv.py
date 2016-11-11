@@ -4,10 +4,6 @@ mkiv -- Make Intervals
 
 This simple script (using python-midi) reads a MIDI file and makes an interval
 (.iv) file (actually XML) that contains non-overlapping notes.
-
-TODO:
--MIDI Control events
--Percussion
 '''
 
 import xml.etree.ElementTree as ET
@@ -48,7 +44,8 @@ parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo 
 parser.add_option('--epsilon', dest='epsilon', type='float', help='Don\'t consider overlaps smaller than this number of seconds (which regularly happen due to precision loss)')
 parser.add_option('--vol-pow', dest='vol_pow', type='float', help='Exponent to raise volume changes (adjusts energy per delta volume)')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.01, stringthres=0.02, epsilon=1e-12, vol_pow=2)
+parser.add_option('--no-text', dest='no_text', action='store_true', help='Disable text streams (useful for unusual text encodings)')
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, vol_pow=2)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -690,14 +687,12 @@ for fname in args:
                             ivnote.set('time', str(note.abstime))
                             ivnote.set('dur', str(note.duration))
 
-    ivtext = ET.SubElement(ivstreams, 'stream', type='text')
-    for tev in textstream:
-        text = tev.ev.text
-        # XXX Codec woes and general ET silliness
-        text = text.replace('\0', '')
-        #text = text.decode('latin_1')
-        #text = text.encode('ascii', 'replace')
-        ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=text)
+    if not options.no_text:
+        ivtext = ET.SubElement(ivstreams, 'stream', type='text')
+        for tev in textstream:
+            text = tev.ev.text
+            text = text.decode('utf8')
+            ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=text)
 
     ivaux = ET.SubElement(ivstreams, 'stream')
     ivaux.set('type', 'aux')

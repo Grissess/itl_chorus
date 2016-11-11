@@ -18,6 +18,7 @@ parser.add_option('-u', '--uid', dest='uid', default='', help='User identifier o
 parser.add_option('-p', '--port', dest='port', default=13676, type='int', help='UDP port to listen on')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='If a note plays longer than a sample length, keep playing the sample')
 parser.add_option('--cut', dest='cut', action='store_true', help='If a note ends within a sample, stop playing that sample immediately')
+parser.add_option('-n', '--max-voices', dest='max_voices', default=-1, type='int', help='Only support this many notes playing simultaneously (earlier ones get dropped)')
 
 options, args = parser.parse_args()
 
@@ -67,7 +68,7 @@ for fname in args:
 if options.verbose:
     print len(DRUMS), 'sounds loaded'
 
-PLAYING = set()
+PLAYING = []
 
 class SampleReader(object):
     def __init__(self, buf, total, amp):
@@ -108,7 +109,7 @@ def gen_data(data, frames, tm, status):
         for i in range(frames):
             fdata[i] += samps[i]
     for src in torem:
-        PLAYING.discard(src)
+        PLAYING.remove(src)
     for i in range(frames):
         fdata[i] = max(MIN, min(MAX, fdata[i]))
     fdata = array.array('i', fdata)
@@ -162,7 +163,10 @@ while True:
         if not options.cut:
             dframes = rframes * ((dframes + rframes - 1) / rframes)
         amp = max(min(options.volume * pkt.as_float(3), 1.0), 0.0)
-        PLAYING.add(SampleReader(rdata, dframes * 4, amp))
+        PLAYING.append(SampleReader(rdata, dframes * 4, amp))
+        if options.max_voices >= 0:
+            while len(PLAYING) > options.max_voices:
+                PLAYING.pop(0)
         #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8

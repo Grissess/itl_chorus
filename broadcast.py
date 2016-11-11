@@ -8,14 +8,15 @@ import thread
 import optparse
 import random
 import itertools
+import re
 
 from packet import Packet, CMD, itos, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
-parser.add_option('--test-delay', dest='test_delay', type='float', help='Time for which to play a test tone')
 parser.add_option('-T', '--transpose', dest='transpose', type='int', help='Transpose by a set amount of semitones (positive or negative)')
 parser.add_option('--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
+parser.add_option('--wait-test', dest='wait_test', action='store_true', help='Wait for user input before moving to the next client tested')
 parser.add_option('-R', '--random', dest='random', type='float', help='Generate random notes at approximately this period')
 parser.add_option('--rand-low', dest='rand_low', type='int', help='Low frequency to randomly sample')
 parser.add_option('--rand-high', dest='rand_high', type='int', help='High frequency to randomly sample')
@@ -48,7 +49,7 @@ parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', hel
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', ports=[13676],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
+parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', ports=[13676],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -57,8 +58,13 @@ if options.help_routes:
 Routes are fully specified by:
 -The attribute to be routed on (either type "T", or UID "U")
 -The value of that attribute
--The exclusivity of that route ("+" for inclusive, "-" for exclusive)
--The stream group to be routed there.
+-The exclusivity of that route ("+" for inclusive, "-" for exclusive, "!" for complete)
+-The stream group to be routed there, or 0 to null route.
+The first two may be replaced by a single '0' to null route a stream--effective only when used with an exclusive route.
+
+"Complete" exclusivity is valid only for obligate polyphones, and indicates that *all* matches are to receive the stream. In other cases, this will have the undesirable effect of routing only one stream.
+
+The special group ALL matches all streams. Regular expressions may be used to specify groups. Note that the first character is *not* part of the regular expression.
 
 The syntax for that specification resembles the following:
 
@@ -68,6 +74,7 @@ The specifier consists of a comma-separated list of attribute-colon-value pairs,
     exit()
 
 GUIS = {}
+BASETIME = time.time()  # XXX fixes a race with the GUI
 
 def gui_pygame():
     print 'Starting pygame GUI...'
@@ -181,15 +188,21 @@ for num in xrange(options.tries):
         uid_groups.setdefault(uid, set()).add(cl)
         type_groups.setdefault(tp, set()).add(cl)
 	if options.test:
-                ts, tms = int(options.test_delay), int(options.test_delay * 1000000) % 1000000
-		s.sendto(str(Packet(CMD.PLAY, ts, tms, 440, options.volume)), cl)
+            ts, tms = int(options.duration), int(options.duration * 1000000) % 1000000
+            if options.wait_test:
+                s.sendto(str(Packet(CMD.PLAY, 65535, 0, 440, options.volume)), cl)
+                raw_input('%r: Press enter to test next client...' %(cl,))
+                s.sendto(str(Packet(CMD.PLAY, ts, tms, 880, options.volume)), cl)
+            else:
+                s.sendto(str(Packet(CMD.PLAY, ts, tms, 440, options.volume)), cl)
                 if not options.sync_test:
-                    time.sleep(options.test_delay)
+                    time.sleep(options.duration)
                     s.sendto(str(Packet(CMD.PLAY, ts, tms, 880, options.volume)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0)), cl)
+            for i in xrange(pkt.data[0]):
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0, i)), cl)
         if pkt.data[0] == OBLIGATE_POLYPHONE:
             pkt.data[0] = 1
         for i in xrange(pkt.data[0]):
@@ -219,7 +232,7 @@ if options.play:
 if options.test and options.sync_test:
     time.sleep(0.25)
     for cl in targets:
-        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 1.0, cl[2])), cl[:2])
+        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, options.volume, cl[2])), cl[:2])
 
 if options.test or options.quit or options.silence:
     print uid_groups
@@ -330,6 +343,7 @@ if options.repeat:
 
 for fname in args:
     if options.pcm and not fname.endswith('.iv'):
+        print 'PCM: play', fname
         if fname == '-':
             import wave
             pcr = wave.open(sys.stdin)
@@ -359,7 +373,8 @@ for fname in args:
 
         BASETIME = time.time() - options.pcmlead
         sampcnt = 0
-        buf = read_all(pcr, 16)
+        buf = read_all(pcr, 32)
+        print 'PCM: pcr', pcr, 'BASETIME', BASETIME, 'buf', len(buf)
         while len(buf) >= 32:
             frag = buf[:32]
             buf = buf[32:]
@@ -371,7 +386,9 @@ for fname in args:
             if delay > 0:
                 time.sleep(delay)
             if len(buf) < 32:
-                buf += read_all(pcr, 16)
+                buf += read_all(pcr, 32 - len(buf))
+        print 'PCM: exit'
+        continue
     try:
         iv = ET.parse(fname).getroot()
     except IOError:
@@ -390,7 +407,7 @@ for fname in args:
     print number, 'clients used (number)'
 
     class Route(object):
-        def __init__(self, fattr, fvalue, group, excl=False):
+        def __init__(self, fattr, fvalue, group, excl=False, complete=False):
             if fattr == 'U':
                 self.map = uid_groups
             elif fattr == 'T':
@@ -400,10 +417,9 @@ for fname in args:
             else:
                 raise ValueError('Not a valid attribute specifier: %r'%(fattr,))
             self.value = fvalue
-            if group is not None and group not in groups:
-                raise ValueError('Not a present group: %r'%(group,))
             self.group = group
             self.excl = excl
+            self.complete = complete
         @classmethod
         def Parse(cls, s):
             fspecs, _, grpspecs = map(lambda x: x.strip(), s.partition('='))
@@ -418,6 +434,8 @@ for fname in args:
                         ret.append(Route(fattr, fvalue, part[1:], False))
                     elif part[0] == '-':
                         ret.append(Route(fattr, fvalue, part[1:], True))
+                    elif part[0] == '!':
+                        ret.append(Route(fattr, fvalue, part[1:], True, True))
                     elif part[0] == '0':
                         ret.append(Route(fattr, fvalue, None, True))
                     else:
@@ -432,26 +450,35 @@ for fname in args:
         def __init__(self, clis=None):
             if clis is None:
                 clis = set(targets)
-            self.clients = clis
+            self.clients = list(clis)
             self.routes = []
         def Route(self, stream):
-            testset = set(self.clients)
+            testset = self.clients
             grp = stream.get('group', 'ALL')
             if options.verbose:
                 print 'Routing', grp, '...'
             excl = False
             for route in self.routes:
-                if route.group == grp:
+                if route.group is not None and re.match(route.group, grp) is not None:
                     if options.verbose:
                         print '\tMatches route', route
                     excl = excl or route.excl
                     matches = filter(lambda x, route=route: route.Apply(x), testset)
                     if matches:
+                        if route.complete:
+                            if options.verbose:
+                                print '\tUsing ALL clients:', matches
+                            for cl in matches:
+                                self.clients.remove(matches[0])
+                                if ports.get(matches[0][:2]) == OBLIGATE_POLYPHONE:
+                                    self.clients.append(matches[0])
+                            return matches
                         if options.verbose:
                             print '\tUsing client', matches[0]
-                        if ports.get(matches[0][:2]) != OBLIGATE_POLYPHONE:
-                            self.clients.remove(matches[0])
-                        return matches[0]
+                        self.clients.remove(matches[0])
+                        if ports.get(matches[0][:2]) == OBLIGATE_POLYPHONE:
+                            self.clients.append(matches[0])
+                        return [matches[0]]
                     if options.verbose:
                         print '\tNo matches, moving on...'
                 if route.group is None:
@@ -468,17 +495,18 @@ for fname in args:
             if excl:
                 if options.verbose:
                     print '\tExclusively routed, no route matched.'
-                return None
+                return []
             if not testset:
                 if options.verbose:
                     print '\tOut of clients, no route matched.'
-                return None
+                return []
             cli = list(testset)[0]
-            if ports.get(cli[:2]) != OBLIGATE_POLYPHONE:
-                self.clients.remove(cli)
+            self.clients.remove(cli)
+            if ports.get(cli[:2]) == OBLIGATE_POLYPHONE:
+                self.clients.append(cli)
             if options.verbose:
                 print '\tDefault route to', cli
-            return cli
+            return [cli]
 
     routeset = RouteSet()
     for rspec in options.routes:
@@ -513,7 +541,7 @@ for fname in args:
                     if options.verbose:
                         print (time.time() - BASETIME) / options.factor, ': PLAY', pitch, dur, ampl
                     if options.dry:
-                        playing_notes[self.ident] = (pitch, ampl)
+                        playing_notes[self.nsid] = (pitch, ampl)
                     else:
                         for cl in cls:
                             s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
@@ -527,7 +555,7 @@ for fname in args:
                                 print '% 6.5f'%((time.time() - BASETIME) / factor,), ': DONE'
                             self.cur_offt = None
                             if options.dry:
-                                playing_notes[self.ident] = (0, 0)
+                                playing_notes[self.nsid] = (0, 0)
                             else:
                                 for cl in cls:
                                     playing_notes[cl] = (0, 0)
@@ -560,7 +588,7 @@ for fname in args:
                             while time.time() - BASETIME < factor*ttime:
                                 self.wait_for(factor*ttime - (time.time() - BASETIME))
                             if options.dry:
-                                cl = self.ident  # XXX hack
+                                cl = self.nsid  # XXX hack
                             else:
                                 for cl in cls:
                                     s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
@@ -574,16 +602,17 @@ for fname in args:
 
     threads = {}
     if options.dry:
-        for ns in notestreams:
+        for nsid, ns in enumerate(notestreams):
             nsq = ns.findall('note')
             nsq.sort(key=lambda x: float(x.get('time')))
             threads[ns] = NSThread(args=(nsq, set()))
+            threads[ns].nsid = nsid
         targets = threads.values()  # XXX hack
     else:
         nscycle = itertools.cycle(notestreams)
         for idx, ns in zip(xrange(number), nscycle):
-            cli = routeset.Route(ns)
-            if cli:
+            clis = routeset.Route(ns)
+            for cli in clis:
                 nsq = ns.findall('note')
                 nsq.sort(key=lambda x: float(x.get('time')))
                 if ns in threads:
