@@ -402,13 +402,16 @@ if options.gui:
     guithread.start()
 
 if options.test:
-    FREQ = 440
+    FREQS[0] = 440
+    EXPIRATIONS[0] = time.time() + 1
     time.sleep(1)
-    FREQ = 0
+    FREQS[0] = 0
     time.sleep(1)
-    FREQ = 880
+    FREQS[0] = 880
+    EXPIRATIONS[0] = time.time() + 1
     time.sleep(1)
-    FREQ = 440
+    FREQS[0] = 440
+    EXPIRATIONS[0] = time.time() + 2
     time.sleep(2)
     exit()
 
