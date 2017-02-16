@@ -705,6 +705,9 @@ for fname in args:
         ivev.set('time', str(mev.abstime))
         ivev.set('data', repr(fw.encode_midi_event(mev.ev)))
 
+    ivargs = ET.SubElement(ivmeta, 'args')
+    ivargs.text = ' '.join('%r' % (i,) for i in sys.argv[1:])
+
     print 'Done.'
     txt = ET.tostring(iv, 'UTF-8')
     open(os.path.splitext(os.path.basename(fname))[0]+'.iv', 'wb').write(txt)

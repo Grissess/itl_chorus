@@ -202,7 +202,7 @@ for fname in args:
         notes = stream.findall('note')
         for note in notes:
             pitch = float(note.get('pitch'))
-            vel = int(note.get('vel'))
+            ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
             time = float(note.get('time'))
             dur = float(note.get('dur'))
             if options.notes:
@@ -218,11 +218,11 @@ for fname in args:
             if options.histogram_tracks:
                 pitch_tracks[sidx][pitch] = pitch_tracks[sidx].get(pitch, 0) + 1
             if options.vel_hist:
-                velocities[vel] = velocities.get(vel, 0) + 1
+                velocities[ampl] = velocities.get(ampl, 0) + 1
                 if options.total:
-                    tot_velocities[vel] = tot_velocities.get(vel, 0) + 1
+                    tot_velocities[ampl] = tot_velocities.get(ampl, 0) + 1
             if options.vel_hist_tracks:
-                velocities_tracks[sidx][vel] = velocities_tracks[sidx].get(vel, 0) + 1
+                velocities_tracks[sidx][ampl] = velocities_tracks[sidx].get(ampl, 0) + 1
             if (options.duration or options.duty_cycle) and time + dur > max_dur:
                 max_dur = time + dur
             if options.duty_cycle:
