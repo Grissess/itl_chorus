@@ -691,7 +691,10 @@ for fname in args:
         ivtext = ET.SubElement(ivstreams, 'stream', type='text')
         for tev in textstream:
             text = tev.ev.text
-            text = text.decode('utf8')
+            try:
+                text = text.decode('utf8')
+            except UnicodeDecodeError:
+                text = 'base64:' + text.encode('base64')
             ivev = ET.SubElement(ivtext, 'text', time=str(tev.abstime), type=type(tev.ev).__name__, text=text)
 
     ivaux = ET.SubElement(ivstreams, 'stream')

@@ -123,7 +123,7 @@ if options.test:
         print 'Current playing:', PLAYING
         print 'Playing:', frq
         data = DRUMS[frq]
-        PLAYING.add(SampleReader(data, len(data), 1.0))
+        PLAYING.append(SampleReader(data, len(data), 1.0))
         time.sleep(len(data) / (4.0 * options.rate))
     print 'Done'
     exit()
