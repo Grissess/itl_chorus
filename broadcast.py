@@ -9,6 +9,7 @@ import optparse
 import random
 import itertools
 import re
+import os
 
 from packet import Packet, CMD, itos, OBLIGATE_POLYPHONE
 
@@ -141,6 +142,13 @@ GUIS['pygame'] = gui_pygame
 factor = options.factor
 
 print 'Factor:', factor
+
+try:
+    rows, columns = map(int, os.popen('stty size', 'r').read().split())
+except Exception:
+    import traceback
+    traceback.print_exc()
+    rows, columns = 25, 80
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -316,7 +324,7 @@ if options.live or options.list_live:
                     deferred_set.add(event.pitch)
                     continue
                 cli = active_set[event.pitch].pop()
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0, cli[2])), cli[:2])
                 playing_notes[cli] = (0, 0)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
@@ -547,7 +555,7 @@ for fname in args:
                             s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
                             playing_notes[cl] = (pitch, ampl)
                 if i > 0 and dur is not None:
-                    self.cur_offt = ttime + dur
+                    self.cur_offt = ttime + dur / options.factor
                 else:
                     if self.cur_offt:
                         if factor * self.cur_offt <= time.time() - BASETIME:
@@ -626,9 +634,13 @@ for fname in args:
             print thr._Thread__args[1]
 
     BASETIME = time.time() - (options.seek*factor)
+    ENDTIME = max(max(float(n.get('time')) + float(n.get('dur')) for n in thr._Thread__args[0]) for thr in threads.values())
+    print 'Playtime is', ENDTIME
     if options.seek > 0:
         for thr in threads.values():
             thr.drop_missed()
+    spin_phase = 0
+    SPINNERS = ['-', '\\', '|', '/']
     while not all(thr.done for thr in threads.values()):
         for thr in threads.values():
             if thr.next_t is None or factor * thr.next_t <= time.time() - BASETIME:
@@ -639,6 +651,14 @@ for fname in args:
             break
         if options.verbose:
             print 'TICK DELTA:', delta
+        else:
+            sys.stdout.write('\x1b[G\x1b[K[%s]' % (
+                ('#' * int((time.time() - BASETIME) * (columns - 2) / (ENDTIME * factor)) + SPINNERS[spin_phase]).ljust(columns - 2),
+            ))
+            sys.stdout.flush()
+            spin_phase += 1
+            if spin_phase >= len(SPINNERS):
+                spin_phase = 0
         if delta >= 0 and not options.spin:
             time.sleep(delta)
     print fname, ': Done!'

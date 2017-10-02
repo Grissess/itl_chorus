@@ -30,6 +30,23 @@ parser.set_defaults(height=20, group=[])
 
 options, args = parser.parse_args()
 
+if not any((
+    options.number,
+    options.groups,
+    options.notes,
+    options.notes_stream,
+    options.histogram,
+    options.vel_hist,
+    options.duration,
+    options.duty_cycle,
+    options.aux,
+    options.meta,
+    options.histogram_tracks,
+    options.vel_hist_tracks,
+)):
+    print 'No computations specified! Assuming you meant --almost-all...'
+    options.almost_all = True
+
 if options.almost_all or options.all:
     options.number = True
     options.groups = True
