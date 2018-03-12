@@ -33,6 +33,7 @@ parser.add_option('-s', '--silence', dest='silence', action='store_true', help='
 parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
+parser.add_option('--clear-routes', dest='routes', action='store_const', const=[], help='Clear routes previously specified (including the default)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
 parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait between pings for clients to initially respond (delays all broadcasts)')
 parser.add_option('--tries', dest='tries', type='int', help='Number of ping packets to send')
@@ -50,7 +51,7 @@ parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', hel
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', ports=[13676],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
+parser.set_defaults(routes=['T:DRUM=!perc,0'], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', ports=[13676, 13677],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
 options, args = parser.parse_args()
 
 if options.help_routes:

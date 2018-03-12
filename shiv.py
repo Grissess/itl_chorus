@@ -219,7 +219,7 @@ for fname in args:
         notes = stream.findall('note')
         for note in notes:
             pitch = float(note.get('pitch'))
-            ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
+            ampl = int(127 * float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0)))
             time = float(note.get('time'))
             dur = float(note.get('dur'))
             if options.notes:

@@ -42,10 +42,11 @@ parser.add_option('--string-rate-off', dest='stringoffrate', type='float', help=
 parser.add_option('--string-threshold', dest='stringthres', type='float', help='Amplitude (as fraction of original) at which point the string model event is terminated')
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
 parser.add_option('--epsilon', dest='epsilon', type='float', help='Don\'t consider overlaps smaller than this number of seconds (which regularly happen due to precision loss)')
+parser.add_option('--slack', dest='slack', type='float', help='Inflate the duration of events by this much when scheduling them--this is for clients which need time to release their streams')
 parser.add_option('--vol-pow', dest='vol_pow', type='float', help='Exponent to raise volume changes (adjusts energy per delta volume)')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
 parser.add_option('--no-text', dest='no_text', action='store_true', help='Disable text streams (useful for unusual text encodings)')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, vol_pow=2)
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, vol_pow=2)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -315,12 +316,13 @@ for fname in args:
     print 'Generating streams...'
 
     class DurationEvent(MergeEvent):
-        __slots__ = ['duration', 'pitch', 'modwheel', 'ampl']
+        __slots__ = ['duration', 'real_duration', 'pitch', 'modwheel', 'ampl']
         def __init__(self, me, pitch, ampl, dur, modwheel=0):
             MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog, me.mw)
             self.pitch = pitch
             self.ampl = ampl
             self.duration = dur
+            self.real_duration = dur
             self.modwheel = modwheel
 
         def __repr__(self):
@@ -481,6 +483,35 @@ for fname in args:
             if ns.IsActive():
                 print 'WARNING: Active notes at end of playback.'
                 ns.Deactivate(MergeEvent(ns.active, ns.active.tidx, lastabstime))
+
+    if options.slack > 0:
+        print 'Adding slack time...'
+
+        slack_evs = []
+        for group in notegroups:
+            for ns in group.streams:
+                for dev in ns.history:
+                    dev.duration += options.slack
+                    slack_evs.append(dev)
+
+        print 'Resorting all streams...'
+        for group in notegroups:
+            group.streams = []
+
+        for dev in slack_evs:
+            for group in notegroups:
+                if not group.filter(dev):
+                    continue
+                for ns in group.streams:
+                    if dev.abstime >= ns.history[-1].abstime + ns.history[-1].duration:
+                        ns.history.append(dev)
+                        break
+                else:
+                    group.streams.append(NoteStream())
+                    group.streams[-1].history.append(dev)
+                break
+            else:
+                print 'WARNING: No stream accepts event', dev
 
     if options.modres > 0:
         print 'Resolving modwheel events...'
@@ -685,7 +716,7 @@ for fname in args:
                             ivnote.set('vel', str(int(note.ampl * 127.0)))
                             ivnote.set('ampl', str(note.ampl))
                             ivnote.set('time', str(note.abstime))
-                            ivnote.set('dur', str(note.duration))
+                            ivnote.set('dur', str(note.real_duration))
 
     if not options.no_text:
         ivtext = ET.SubElement(ivstreams, 'stream', type='text')

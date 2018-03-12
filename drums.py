@@ -6,6 +6,7 @@ import wave
 import cStringIO as StringIO
 import array
 import time
+import colorsys
 
 from packet import Packet, CMD, stoi, OBLIGATE_POLYPHONE
 
@@ -19,6 +20,10 @@ parser.add_option('-p', '--port', dest='port', default=13676, type='int', help='
 parser.add_option('--repeat', dest='repeat', action='store_true', help='If a note plays longer than a sample length, keep playing the sample')
 parser.add_option('--cut', dest='cut', action='store_true', help='If a note ends within a sample, stop playing that sample immediately')
 parser.add_option('-n', '--max-voices', dest='max_voices', default=-1, type='int', help='Only support this many notes playing simultaneously (earlier ones get dropped)')
+parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help='Low frequency for colored background')
+parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
+parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
+parser.add_option('--counter-modulus', dest='counter_modulus', type='int', default=16, help='Number of packet events in period of the terminal color scroll on the left margin')
 
 options, args = parser.parse_args()
 
@@ -30,6 +35,16 @@ if not args:
     print 'Need at least one drumpack (.tar.bz2) as an argument!'
     parser.print_usage()
     exit(1)
+
+def rgb_for_freq_amp(f, a):
+    pitchval = float(f - options.low_freq) / (options.high_freq - options.low_freq)
+    if options.log_base == 0:
+        try:
+            pitchval = math.log(pitchval) / math.log(options.log_base)
+        except ValueError:
+            pass
+    bgcol = colorsys.hls_to_rgb(min((1.0, max((0.0, pitchval)))), 0.5 * (a ** 2), 1.0)
+    return [int(i*255) for i in bgcol]
 
 DRUMS = {}
 
@@ -134,6 +149,7 @@ sock.bind(('', options.port))
 
 #signal.signal(signal.SIGALRM, sigalrm)
 
+counter = 0
 while True:
     data = ''
     while not data:
@@ -142,12 +158,17 @@ while True:
         except socket.error:
             pass
     pkt = Packet.FromStr(data)
-    print 'From', cli, 'command', pkt.cmd
+    crgb = [int(i*255) for i in colorsys.hls_to_rgb((float(counter) / options.counter_modulus) % 1.0, 0.5, 1.0)]
+    print '\x1b[38;2;{};{};{}m#'.format(*crgb),
+    counter += 1
+    print '\x1b[mFrom', cli, 'command', pkt.cmd,
     if pkt.cmd == CMD.KA:
-        pass
+        print '\x1b[37mKA'
     elif pkt.cmd == CMD.PING:
         sock.sendto(data, cli)
+        print '\x1b[1;33mPING'
     elif pkt.cmd == CMD.QUIT:
+        print '\x1b[1;31mQUIT'
         break
     elif pkt.cmd == CMD.PLAY:
         frq = pkt.data[2]
@@ -167,6 +188,14 @@ while True:
         if options.max_voices >= 0:
             while len(PLAYING) > options.max_voices:
                 PLAYING.pop(0)
+        frgb = rgb_for_freq_amp(pkt.data[2], pkt.as_float(3))
+        print '\x1b[1;32mPLAY',
+        print '\x1b[1;34mVOICE', '{:03}'.format(pkt.data[4]),
+        print '\x1b[1;38;2;{};{};{}mFREQ'.format(*frgb), '{:04}'.format(pkt.data[2]), 'AMP', '%08.6f'%pkt.as_float(3),
+        if pkt.data[0] == 0 and pkt.data[1] == 0:
+            print '\x1b[1;35mSTOP!!!'
+        else:
+            print '\x1b[1;36mDUR', '%08.6f'%dur
         #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8
@@ -175,6 +204,7 @@ while True:
         for i in xrange(len(options.uid)/4 + 1):
             data[i+2] = stoi(options.uid[4*i:4*(i+1)])
         sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
+        print '\x1b[1;34mCAPS'
 #    elif pkt.cmd == CMD.PCM:
 #        fdata = data[4:]
 #        fdata = struct.pack('16i', *[i<<16 for i in struct.unpack('16h', fdata)])

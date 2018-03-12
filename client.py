@@ -13,6 +13,7 @@ import array
 import random
 import threading
 import thread
+import colorsys
 
 from packet import Packet, CMD, stoi
 
@@ -35,6 +36,7 @@ parser.add_option('--pg-no-colback', dest='no_colback', action='store_true', hel
 parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help='Low frequency for colored background')
 parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
 parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
+parser.add_option('--counter-modulus', dest='counter_modulus', type='int', default=16, help='Number of packet events in period of the terminal color scroll on the left margin')
 
 options, args = parser.parse_args()
 
@@ -64,6 +66,16 @@ QUEUED_PCM = ''
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
 
+def rgb_for_freq_amp(f, a):
+    pitchval = float(f - options.low_freq) / (options.high_freq - options.low_freq)
+    if options.log_base == 0:
+        try:
+            pitchval = math.log(pitchval) / math.log(options.log_base)
+        except ValueError:
+            pass
+    bgcol = colorsys.hls_to_rgb(min((1.0, max((0.0, pitchval)))), 0.5 * (a ** 2), 1.0)
+    return [int(i*255) for i in bgcol]
+
 # GUIs
 
 GUIs = {}
@@ -76,7 +88,6 @@ def GUI(f):
 def pygame_notes():
     import pygame
     import pygame.gfxdraw
-    import colorsys
     pygame.init()
 
     dispinfo = pygame.display.Info()
@@ -124,14 +135,7 @@ def pygame_notes():
                 FREQ = FREQS[i]
                 AMP = AMPS[i]
                 if FREQ > 0:
-                    pitchval = float(FREQ - options.low_freq) / (options.high_freq - options.low_freq)
-                    if options.log_base == 0:
-                        try:
-                            pitchval = math.log(pitchval) / math.log(options.log_base)
-                        except ValueError:
-                            pass
-                    bgcol = colorsys.hls_to_rgb(min((1.0, max((0.0, pitchval)))), 0.5 * ((AMP / float(MAX)) ** 2), 1.0)
-                    bgcol = [int(j*255) for j in bgcol]
+                    bgcol = rgb_for_freq_amp(FREQ, float(AMP) / MAX)
                 else:
                     bgcol = (0, 0, 0)
                 #print i, ':', pitchval
@@ -420,6 +424,7 @@ sock.bind(('', PORT))
 
 #signal.signal(signal.SIGALRM, sigalrm)
 
+counter = 0
 while True:
     data = ''
     while not data:
@@ -428,12 +433,17 @@ while True:
         except socket.error:
             pass
     pkt = Packet.FromStr(data)
-    print 'From', cli, 'command', pkt.cmd
+    crgb = [int(i*255) for i in colorsys.hls_to_rgb((float(counter) / options.counter_modulus) % 1.0, 0.5, 1.0)]
+    print '\x1b[38;2;{};{};{}m#'.format(*crgb),
+    counter += 1
+    print '\x1b[mFrom', cli, 'command', pkt.cmd,
     if pkt.cmd == CMD.KA:
-        pass
+        print '\x1b[37mKA'
     elif pkt.cmd == CMD.PING:
         sock.sendto(data, cli)
+        print '\x1b[1;33mPING'
     elif pkt.cmd == CMD.QUIT:
+        print '\x1b[1;31mQUIT'
         break
     elif pkt.cmd == CMD.PLAY:
         voice = pkt.data[4]
@@ -441,6 +451,15 @@ while True:
         FREQS[voice] = pkt.data[2]
         AMPS[voice] = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
         EXPIRATIONS[voice] = time.time() + dur
+        vrgb = [int(i*255) for i in colorsys.hls_to_rgb(float(voice) / STREAMS * 2.0 / 3.0, 0.5, 1.0)]
+        frgb = rgb_for_freq_amp(pkt.data[2], pkt.as_float(3))
+        print '\x1b[1;32mPLAY',
+        print '\x1b[1;38;2;{};{};{}mVOICE'.format(*vrgb), '{:03}'.format(voice),
+        print '\x1b[1;38;2;{};{};{}mFREQ'.format(*frgb), '{:04}'.format(pkt.data[2]), 'AMP', '%08.6f'%pkt.as_float(3),
+        if pkt.data[0] == 0 and pkt.data[1] == 0:
+            print '\x1b[1;35mSTOP!!!'
+        else:
+            print '\x1b[1;36mDUR', '%08.6f'%dur
         #signal.setitimer(signal.ITIMER_REAL, dur)
     elif pkt.cmd == CMD.CAPS:
         data = [0] * 8
@@ -449,6 +468,7 @@ while True:
         for i in xrange(len(UID)/4 + 1):
             data[i+2] = stoi(UID[4*i:4*(i+1)])
         sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
+        print '\x1b[1;34mCAPS'
     elif pkt.cmd == CMD.PCM:
         fdata = data[4:]
         fdata = struct.pack('16i', *[i<<16 for i in struct.unpack('16h', fdata)])
