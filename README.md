@@ -87,22 +87,31 @@ to do so should know the following about the IV files:
   from working properly. In addition, it should be noted that the clients are
   *designed* to overwrite one incoming note with the next, regardless of whether or
   not this interrupts the duration of the previous one--this is how "live mode" and "silence" work.
+- Note streams *should* be sorted in priority order, most important first. In
+  practice, `mkiv.py` sorts them in order of descending duty cycle--the ratio
+  of time for which a note is playing to the duration of the performance--which
+  seems to be a good rule of thumb. `broadcast.py` allocates streams in the
+  order found in the interval file, so any streams which cannot be allocated
+  are culled from the end. (For testing purposes, polyphony is supported in the
+  Python client, which can artificially expand the number of clients at the
+  expense of volume, processing time, and quality.)
 
 # Todo
 
-- Polyphony--have multiple voices on one machine
-  - Mixed polyphony: the audio is the result of mixing (saturating addition, etc.)--only doable with PCM
-  - LFO polyphony: tones are "rapidly" switched between (how old microcomputers used to accomplish this with one beep speaker)
-- Preloading--send events to clients early to avoid jitter problems with the network
+- [x] ~~Polyphony--have multiple voices on one machine~~ `-n` option to `client.py`
+  - [x] ~~Mixed polyphony: the audio is the result of mixing (saturating addition, etc.)--only doable with PCM~~ (current implementation in `client.py`)
+  - [x] ~~LFO polyphony: tones are "rapidly" switched between (how old microcomputers used to accomplish this with one beep speaker)~~ (this can be done at the interval level--see `downsamp.py`, which processes an `.iv` file into a `.downsamp.iv` file with only one stream which modulates between all active voices. At present, it only supports downsampling to one stream.)
+- [ ] Preloading--send events to clients early to avoid jitter problems with the network
   - Would require a network time synchronization to work effectively; makes the broadcaster have less control over nuanced timing
-- Other stream types--e.g., PCM streams for raw audio data
-  - More clientside implementation work
-  - Definitely a higher bandwidth--might interfere with critical timing, and would almost certainly need preloading
-- Percussion--implement percussive instruments
-  - Requires an analysis of how current DAWs and MIDI editors mark "percussion" tracks--with a program change? GM specifies channel 10...
-- Soundfonts--have the ability to significantly affect the instrumentation of the clients
+  - In practice, this is unnecessary with good network design principles; a decently under-capacity 1Gb network and good switches are more than enough to deliver 36-byte UDP packets in a timely fashion
+- [x] ~~Other stream types--e.g., PCM streams for raw audio data~~ PCM is supported in `client.py` using the PCM packet type, and `broadcast.py` can play WAV files that are S16/44.1kHz, including a streaming WAV from (e.g.) `arecord` using the `--pcm` mode.
+  - ~~More clientside implementation work~~
+  - ~~Definitely a higher bandwidth--might interfere with critical timing, and would almost certainly need preloading~~ `--pcm-lead` (clock drift is still an issue).
+- [x] ~~Percussion--implement percussive instruments~~ `drums.py` is the reference implementation, and is actually more flexible--it can play any patch in response to any frequency command.
+  - ~~Requires an analysis of how current DAWs and MIDI editors mark "percussion" tracks--with a program change? GM specifies channel 10...~~ (that shows up as 9 in a zero-based channel count, by the way)
+- [ ] Soundfonts--have the ability to significantly affect the instrumentation of the clients
   - Would also be nice to do this from the broadcaster's end without introducing RCE
   - Might require integration of another large libary like fluidsynth--at which point this would just be "networked MIDI" :)
-- Code cleanup--make the entire project slightly more modular and palatable
-- Graphics--display pretty things on machines with the capability
-  - Probably via pygame...
+- [ ] Code cleanup--make the entire project slightly more modular and palatable
+- [x] ~~Graphics--display pretty things on machines with the capability~~ Use `-G pygame_notes` with client.py, `-G pygame` with broadcast.py.
+  - ~~Probably via pygame...~~ (as implied by the names above, both *do* require pygame.)
