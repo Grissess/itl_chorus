@@ -8,14 +8,16 @@ import thread
 import optparse
 import random
 import itertools
+import re
+import os
 
-from packet import Packet, CMD, itos
+from packet import Packet, CMD, itos, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
-parser.add_option('--test-delay', dest='test_delay', type='float', help='Time for which to play a test tone')
 parser.add_option('-T', '--transpose', dest='transpose', type='int', help='Transpose by a set amount of semitones (positive or negative)')
 parser.add_option('--sync-test', dest='sync_test', action='store_true', help='Don\'t wait for clients to play tones properly--have them all test tone at the same time')
+parser.add_option('--wait-test', dest='wait_test', action='store_true', help='Wait for user input before moving to the next client tested')
 parser.add_option('-R', '--random', dest='random', type='float', help='Generate random notes at approximately this period')
 parser.add_option('--rand-low', dest='rand_low', type='int', help='Low frequency to randomly sample')
 parser.add_option('--rand-high', dest='rand_high', type='int', help='High frequency to randomly sample')
@@ -26,22 +28,30 @@ parser.add_option('-q', '--quit', dest='quit', action='store_true', help='Instru
 parser.add_option('-p', '--play', dest='play', action='append', help='Play a single tone or chord (specified multiple times) on all listening clients (either "midi pitch" or "@frequency")')
 parser.add_option('-P', '--play-async', dest='play_async', action='store_true', help='Don\'t wait for the tone to finish using the local clock')
 parser.add_option('-D', '--duration', dest='duration', type='float', help='How long to play this note for')
-parser.add_option('-V', '--volume', dest='volume', type='int', help='Master volume (0-255)')
+parser.add_option('-V', '--volume', dest='volume', type='float', help='Master volume [0.0, 1.0]')
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
 parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
+parser.add_option('--clear-routes', dest='routes', action='store_const', const=[], help='Clear routes previously specified (including the default)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
-parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait for clients to initially respond (delays all broadcasts)')
+parser.add_option('-W', '--wait-time', dest='wait_time', type='float', help='How long to wait between pings for clients to initially respond (delays all broadcasts)')
+parser.add_option('--tries', dest='tries', type='int', help='Number of ping packets to send')
 parser.add_option('-B', '--bind-addr', dest='bind_addr', help='The IP address (or IP:port) to bind to (influences the network to send to)')
+parser.add_option('--port', dest='ports', action='append', type='int', help='Add a port to find clients on')
+parser.add_option('--clear-ports', dest='ports', action='store_const', const=[], help='Clear ports previously specified (including the default)')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='Repeat the file playlist indefinitely')
 parser.add_option('-n', '--number', dest='number', type='int', help='Number of clients to use; if negative (default -1), use the product of stream count and the absolute value of this parameter')
+parser.add_option('--dry', dest='dry', action='store_true', help='Dry run--don\'t actually search for or play to clients, but pretend they exist (useful with -G)')
+parser.add_option('--pcm', dest='pcm', action='store_true', help='Use experimental PCM rendering')
+parser.add_option('--pcm-lead', dest='pcmlead', type='float', help='Seconds of leading PCM data to send')
+parser.add_option('--spin', dest='spin', action='store_true', help='Ignore delta times in the queue (busy loop the CPU) for higher accuracy')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=[], test_delay=0.25, random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=1.0, volume=255, wait_time=0.25, play=[], transpose=0, seek=0.0, bind_addr='', pg_width = 0, pg_height = 0, number=-1)
+parser.set_defaults(routes=['T:DRUM=!perc,0'], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', ports=[13676, 13677],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
 options, args = parser.parse_args()
 
 if options.help_routes:
@@ -50,8 +60,13 @@ if options.help_routes:
 Routes are fully specified by:
 -The attribute to be routed on (either type "T", or UID "U")
 -The value of that attribute
--The exclusivity of that route ("+" for inclusive, "-" for exclusive)
--The stream group to be routed there.
+-The exclusivity of that route ("+" for inclusive, "-" for exclusive, "!" for complete)
+-The stream group to be routed there, or 0 to null route.
+The first two may be replaced by a single '0' to null route a stream--effective only when used with an exclusive route.
+
+"Complete" exclusivity is valid only for obligate polyphones, and indicates that *all* matches are to receive the stream. In other cases, this will have the undesirable effect of routing only one stream.
+
+The special group ALL matches all streams. Regular expressions may be used to specify groups. Note that the first character is *not* part of the regular expression.
 
 The syntax for that specification resembles the following:
 
@@ -61,6 +76,7 @@ The specifier consists of a comma-separated list of attribute-colon-value pairs,
     exit()
 
 GUIS = {}
+BASETIME = time.time()  # XXX fixes a race with the GUI
 
 def gui_pygame():
     print 'Starting pygame GUI...'
@@ -93,6 +109,7 @@ def gui_pygame():
     PFAC = HEIGHT / 128.0
 
     clock = pygame.time.Clock()
+    font = pygame.font.SysFont(pygame.font.get_default_font(), 24)
 
     print 'Pygame GUI initialized, running...'
 
@@ -103,10 +120,13 @@ def gui_pygame():
         idx = 0
         for cli, note in sorted(playing_notes.items(), key = lambda pair: pair[0]):
             pitch = note[0]
-            col = colorsys.hls_to_rgb(float(idx) / len(clients), note[1]/512.0, 1.0)
+            col = colorsys.hls_to_rgb(float(idx) / len(targets), note[1]/2.0, 1.0)
             col = [int(i*255) for i in col]
             disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
             idx += 1
+        tsurf = font.render('%0.3f' % ((time.time() - BASETIME) / factor,), True, (255, 255, 255), (0, 0, 0))
+        disp.fill((0, 0, 0), tsurf.get_rect())
+        disp.blit(tsurf, (0, 0))
         pygame.display.flip()
 
         for ev in pygame.event.get():
@@ -120,10 +140,16 @@ def gui_pygame():
 
 GUIS['pygame'] = gui_pygame
 
-PORT = 13676
 factor = options.factor
 
 print 'Factor:', factor
+
+try:
+    rows, columns = map(int, os.popen('stty size', 'r').read().split())
+except Exception:
+    import traceback
+    traceback.print_exc()
+    rows, columns = 25, 80
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -133,51 +159,67 @@ if options.bind_addr:
         port = '12074'
     s.bind((addr, int(port)))
 
-clients = []
+clients = set()
+targets = set()
 uid_groups = {}
 type_groups = {}
+ports = {}
 
-s.sendto(str(Packet(CMD.PING)), ('255.255.255.255', PORT))
-s.settimeout(options.wait_time)
-
-try:
-	while True:
-		data, src = s.recvfrom(4096)
-		clients.append(src)
-except socket.timeout:
-	pass
-
-playing_notes = {}
-for cli in clients:
-    playing_notes[cli] = (0, 0)
+if not options.dry:
+    s.settimeout(options.wait_time)
+    for PORT in options.ports:
+        for num in xrange(options.tries):
+            s.sendto(str(Packet(CMD.PING)), ('255.255.255.255', PORT))
+            try:
+                while True:
+                    data, src = s.recvfrom(4096)
+                    clients.add(src)
+            except socket.timeout:
+                pass
 
 print len(clients), 'detected clients'
 
-print 'Clients:'
-for cl in clients:
+for num in xrange(options.tries):
+    print 'Try', num
+    for cl in clients:
 	print cl,
         s.sendto(str(Packet(CMD.CAPS)), cl)
         data, _ = s.recvfrom(4096)
         pkt = Packet.FromStr(data)
         print 'ports', pkt.data[0],
+        ports[cl] = pkt.data[0]
         tp = itos(pkt.data[1])
         print 'type', tp,
         uid = ''.join([itos(i) for i in pkt.data[2:]]).rstrip('\x00')
         print 'uid', uid
         if uid == '':
             uid = None
-        uid_groups.setdefault(uid, []).append(cl)
-        type_groups.setdefault(tp, []).append(cl)
+        uid_groups.setdefault(uid, set()).add(cl)
+        type_groups.setdefault(tp, set()).add(cl)
 	if options.test:
-                ts, tms = int(options.test_delay), int(options.test_delay * 1000000) % 1000000
-		s.sendto(str(Packet(CMD.PLAY, ts, tms, 440, options.volume)), cl)
+            ts, tms = int(options.duration), int(options.duration * 1000000) % 1000000
+            if options.wait_test:
+                s.sendto(str(Packet(CMD.PLAY, 65535, 0, 440, options.volume)), cl)
+                raw_input('%r: Press enter to test next client...' %(cl,))
+                s.sendto(str(Packet(CMD.PLAY, ts, tms, 880, options.volume)), cl)
+            else:
+                s.sendto(str(Packet(CMD.PLAY, ts, tms, 440, options.volume)), cl)
                 if not options.sync_test:
-                    time.sleep(options.test_delay)
+                    time.sleep(options.duration)
                     s.sendto(str(Packet(CMD.PLAY, ts, tms, 880, options.volume)), cl)
 	if options.quit:
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cl)
+            for i in xrange(pkt.data[0]):
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0, i)), cl)
+        if pkt.data[0] == OBLIGATE_POLYPHONE:
+            pkt.data[0] = 1
+        for i in xrange(pkt.data[0]):
+            targets.add(cl+(i,))
+
+playing_notes = {}
+for tg in targets:
+    playing_notes[tg] = (0, 0)
 
 if options.gui:
     gui_thr = threading.Thread(target=GUIS[options.gui], args=())
@@ -190,16 +232,16 @@ if options.play:
             options.play[i] = int(val[1:])
         else:
             options.play[i] = int(440.0 * 2**((int(val) - 69)/12.0))
-    for i, cl in enumerate(clients):
-        s.sendto(str(Packet(CMD.PLAY, int(options.duration), int(1000000*(options.duration-int(options.duration))), options.play[i%len(options.play)], options.volume)), cl)
+    for i, cl in enumerate(targets):
+        s.sendto(str(Packet(CMD.PLAY, int(options.duration), int(1000000*(options.duration-int(options.duration))), options.play[i%len(options.play)], options.volume, cl[2])), cl[:2])
     if not options.play_async:
         time.sleep(options.duration)
     exit()
 
 if options.test and options.sync_test:
     time.sleep(0.25)
-    for cl in clients:
-        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, 255)), cl)
+    for cl in targets:
+        s.sendto(str(Packet(CMD.PLAY, 0, 250000, 880, options.volume, cl[2])), cl[:2])
 
 if options.test or options.quit or options.silence:
     print uid_groups
@@ -208,8 +250,8 @@ if options.test or options.quit or options.silence:
 
 if options.random > 0:
     while True:
-        for cl in clients:
-            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), options.volume)), cl)
+        for cl in targets:
+            s.sendto(str(Packet(CMD.PLAY, int(options.random), int(1000000*(options.random-int(options.random))), random.randint(options.rand_low, options.rand_high), options.volume, cl[2])), cl[:2])
         time.sleep(options.random)
 
 if options.live or options.list_live:
@@ -223,7 +265,7 @@ if options.live or options.list_live:
         print sequencer.SequencerHardware()
         exit()
     seq = sequencer.SequencerRead(sequencer_resolution=120)
-    client_set = set(clients)
+    client_set = set(targets)
     active_set = {} # note (pitch) -> [client]
     deferred_set = set() # pitches held due to sustain
     sustain_status = False
@@ -270,9 +312,9 @@ if options.live or options.list_live:
                     print 'WARNING: Out of clients to do note %r; dropped'%(event.pitch,)
                     continue
                 cli = sorted(inactive_set)[0]
-                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), 2*event.velocity)), cli)
+                s.sendto(str(Packet(CMD.PLAY, 65535, 0, int(440.0 * 2**((event.pitch-69)/12.0)), event.velocity / 127.0, cli[2])), cli[:2])
                 active_set.setdefault(event.pitch, []).append(cli)
-                playing_notes[cli] = (event.pitch, 2*event.velocity)
+                playing_notes[cli] = (event.pitch, event.velocity / 127.0)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '+ =>', active_set[event.pitch]
             elif isinstance(event, midi.NoteOffEvent):
@@ -283,7 +325,7 @@ if options.live or options.list_live:
                     deferred_set.add(event.pitch)
                     continue
                 cli = active_set[event.pitch].pop()
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0, cli[2])), cli[:2])
                 playing_notes[cli] = (0, 0)
                 if options.verbose:
                     print 'LIVE:', event.pitch, '- =>', active_set[event.pitch]
@@ -300,7 +342,7 @@ if options.live or options.list_live:
                                 print 'WARNING: Attempted deferred removal of inactive note %r'%(pitch,)
                                 continue
                             for cli in active_set[pitch]:
-                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0)), cli)
+                                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0, cli[2])), cli[:2])
                                 playing_notes[cli] = (0, 0)
                             del active_set[pitch]
                         deferred_set.clear()
@@ -309,6 +351,53 @@ if options.repeat:
     args = itertools.cycle(args)
 
 for fname in args:
+    if options.pcm and not fname.endswith('.iv'):
+        print 'PCM: play', fname
+        if fname == '-':
+            import wave
+            pcr = wave.open(sys.stdin)
+            samprate = pcr.getframerate()
+            pcr.read = pcr.readframes
+        else:
+            try:
+                import audiotools
+                pcr = audiotools.open(fname).to_pcm()
+                assert pcr.channels == 1 and pcr.bits_per_sample == 16 and pcr.sample_rate == 44100
+                samprate = pcr.sample_rate
+            except ImportError:
+                import wave
+                pcr = wave.open(fname, 'r')
+                assert pcr.getnchannels() == 1 and pcr.getsampwidth() == 2 and pcr.getframerate() == 44100
+                samprate = pcr.getframerate()
+                pcr.read = pcr.readframes
+
+        def read_all(fn, n):
+            buf = ''
+            while len(buf) < n:
+                nbuf = fn.read(n - len(buf))
+                if not isinstance(nbuf, str):
+                    nbuf = nbuf.to_bytes(False, True)
+                buf += nbuf
+            return buf
+
+        BASETIME = time.time() - options.pcmlead
+        sampcnt = 0
+        buf = read_all(pcr, 32)
+        print 'PCM: pcr', pcr, 'BASETIME', BASETIME, 'buf', len(buf)
+        while len(buf) >= 32:
+            frag = buf[:32]
+            buf = buf[32:]
+            for cl in clients:
+                s.sendto(struct.pack('>L', CMD.PCM) + frag, cl)
+            sampcnt += len(frag) / 2
+            delay = max(0, BASETIME + (sampcnt / float(samprate)) - time.time())
+            #print sampcnt, delay
+            if delay > 0:
+                time.sleep(delay)
+            if len(buf) < 32:
+                buf += read_all(pcr, 32 - len(buf))
+        print 'PCM: exit'
+        continue
     try:
         iv = ET.parse(fname).getroot()
     except IOError:
@@ -322,11 +411,12 @@ for fname in args:
     number = (len(notestreams) * abs(options.number) if options.number < 0 else options.number)
     print len(notestreams), 'notestreams'
     print len(clients), 'clients'
+    print len(targets), 'targets'
     print len(groups), 'groups'
     print number, 'clients used (number)'
 
     class Route(object):
-        def __init__(self, fattr, fvalue, group, excl=False):
+        def __init__(self, fattr, fvalue, group, excl=False, complete=False):
             if fattr == 'U':
                 self.map = uid_groups
             elif fattr == 'T':
@@ -336,10 +426,9 @@ for fname in args:
             else:
                 raise ValueError('Not a valid attribute specifier: %r'%(fattr,))
             self.value = fvalue
-            if group is not None and group not in groups:
-                raise ValueError('Not a present group: %r'%(group,))
             self.group = group
             self.excl = excl
+            self.complete = complete
         @classmethod
         def Parse(cls, s):
             fspecs, _, grpspecs = map(lambda x: x.strip(), s.partition('='))
@@ -354,39 +443,51 @@ for fname in args:
                         ret.append(Route(fattr, fvalue, part[1:], False))
                     elif part[0] == '-':
                         ret.append(Route(fattr, fvalue, part[1:], True))
+                    elif part[0] == '!':
+                        ret.append(Route(fattr, fvalue, part[1:], True, True))
                     elif part[0] == '0':
                         ret.append(Route(fattr, fvalue, None, True))
                     else:
                         raise ValueError('Not an exclusivity: %r'%(part[0],))
             return ret
         def Apply(self, cli):
-            return cli in self.map.get(self.value, [])
+            return cli[:2] in self.map.get(self.value, [])
         def __repr__(self):
             return '<Route of %r to %s:%s>'%(self.group, ('U' if self.map is uid_groups else 'T'), self.value)
 
     class RouteSet(object):
         def __init__(self, clis=None):
             if clis is None:
-                clis = clients[:]
-            self.clients = clis
+                clis = set(targets)
+            self.clients = list(clis)
             self.routes = []
         def Route(self, stream):
-            testset = self.clients[:]
+            testset = self.clients
             grp = stream.get('group', 'ALL')
             if options.verbose:
                 print 'Routing', grp, '...'
             excl = False
             for route in self.routes:
-                if route.group == grp:
+                if route.group is not None and re.match(route.group, grp) is not None:
                     if options.verbose:
                         print '\tMatches route', route
                     excl = excl or route.excl
                     matches = filter(lambda x, route=route: route.Apply(x), testset)
                     if matches:
+                        if route.complete:
+                            if options.verbose:
+                                print '\tUsing ALL clients:', matches
+                            for cl in matches:
+                                self.clients.remove(matches[0])
+                                if ports.get(matches[0][:2]) == OBLIGATE_POLYPHONE:
+                                    self.clients.append(matches[0])
+                            return matches
                         if options.verbose:
                             print '\tUsing client', matches[0]
                         self.clients.remove(matches[0])
-                        return matches[0]
+                        if ports.get(matches[0][:2]) == OBLIGATE_POLYPHONE:
+                            self.clients.append(matches[0])
+                        return [matches[0]]
                     if options.verbose:
                         print '\tNo matches, moving on...'
                 if route.group is None:
@@ -403,16 +504,18 @@ for fname in args:
             if excl:
                 if options.verbose:
                     print '\tExclusively routed, no route matched.'
-                return None
+                return []
             if not testset:
                 if options.verbose:
                     print '\tOut of clients, no route matched.'
-                return None
-            cli = testset[0]
+                return []
+            cli = list(testset)[0]
             self.clients.remove(cli)
+            if ports.get(cli[:2]) == OBLIGATE_POLYPHONE:
+                self.clients.append(cli)
             if options.verbose:
                 print '\tDefault route to', cli
-            return cli
+            return [cli]
 
     routeset = RouteSet()
     for rspec in options.routes:
@@ -428,33 +531,50 @@ for fname in args:
             print route
 
     class NSThread(threading.Thread):
-        def drop_missed(self):
-            nsq, cl = self._Thread__args
-            cnt = 0
-            while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
-                nsq.pop(0)
-                cnt += 1
-            if options.verbose:
-                print self, 'dropped', cnt, 'notes due to miss'
-            self._Thread__args = (nsq, cl)
-        def wait_for(self, t):
-            if t <= 0:
-                return
-            time.sleep(t)
-	def run(self):
-		nsq, cl = self._Thread__args
-		for note in nsq:
-			ttime = float(note.get('time'))
-			pitch = int(note.get('pitch')) + options.transpose
-			vel = int(note.get('vel'))
-			dur = factor*float(note.get('dur'))
-			while time.time() - BASETIME < factor*ttime:
-				self.wait_for(factor*ttime - (time.time() - BASETIME))
-			s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
-                        if options.verbose:
-                            print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-			self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
-    class NSThread(threading.Thread):
+            def __init__(self, *args, **kwargs):
+                threading.Thread.__init__(self, *args, **kwargs)
+                self.done = False
+                self.cur_offt = None
+                self.next_t = None
+            def actuate_missed(self):
+                nsq, cls = self._Thread__args
+                dur = None
+                i = 0
+                while nsq and float(nsq[0].get('time'))*factor <= time.time() - BASETIME:
+                    i += 1
+                    note = nsq.pop(0)
+                    ttime = float(note.get('time'))
+                    pitch = float(note.get('pitch')) + options.transpose
+                    ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
+                    dur = factor*float(note.get('dur'))
+                    if options.verbose:
+                        print (time.time() - BASETIME) / options.factor, ': PLAY', pitch, dur, ampl
+                    if options.dry:
+                        playing_notes[self.nsid] = (pitch, ampl)
+                    else:
+                        for cl in cls:
+                            s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
+                            playing_notes[cl] = (pitch, ampl)
+                if i > 0 and dur is not None:
+                    self.cur_offt = ttime + dur / options.factor
+                else:
+                    if self.cur_offt:
+                        if factor * self.cur_offt <= time.time() - BASETIME:
+                            if options.verbose:
+                                print '% 6.5f'%((time.time() - BASETIME) / factor,), ': DONE'
+                            self.cur_offt = None
+                            if options.dry:
+                                playing_notes[self.nsid] = (0, 0)
+                            else:
+                                for cl in cls:
+                                    playing_notes[cl] = (0, 0)
+                next_act = None
+                if nsq:
+                    next_act = float(nsq[0].get('time'))
+                if options.verbose:
+                    print 'NEXT_ACT:', next_act, 'CUR_OFFT:', self.cur_offt
+                self.next_t = min((next_act or float('inf'), self.cur_offt or float('inf')))
+                self.done = not (nsq or self.cur_offt)
             def drop_missed(self):
                 nsq, cl = self._Thread__args
                 cnt = 0
@@ -463,7 +583,6 @@ for fname in args:
                     cnt += 1
                 if options.verbose:
                     print self, 'dropped', cnt, 'notes due to miss'
-                self._Thread__args = (nsq, cl)
             def wait_for(self, t):
                 if t <= 0:
                     return
@@ -473,30 +592,42 @@ for fname in args:
                     for note in nsq:
                             ttime = float(note.get('time'))
                             pitch = float(note.get('pitch')) + options.transpose
-                            vel = int(note.get('vel'))
+                            ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                             dur = factor*float(note.get('dur'))
                             while time.time() - BASETIME < factor*ttime:
-                                    self.wait_for(factor*ttime - (time.time() - BASETIME))
-                            for cl in cls:
-                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), int(vel*2 * options.volume/255.0))), cl)
+                                self.wait_for(factor*ttime - (time.time() - BASETIME))
+                            if options.dry:
+                                cl = self.nsid  # XXX hack
+                            else:
+                                for cl in cls:
+                                    s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
                             if options.verbose:
                                 print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
-                            playing_notes[cl] = (pitch, vel*2)
+                            playing_notes[cl] = (pitch, ampl)
                             self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
                             playing_notes[cl] = (0, 0)
                     if options.verbose:
                         print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
 
     threads = {}
-    nscycle = itertools.cycle(notestreams)
-    for idx, ns in zip(xrange(number), nscycle):
-        cli = routeset.Route(ns)
-        if cli:
+    if options.dry:
+        for nsid, ns in enumerate(notestreams):
             nsq = ns.findall('note')
-            if ns in threads:
-                threads[ns]._Thread__args[1].add(cli)
-            else:
-                threads[ns] = NSThread(args=(nsq, set([cli])))
+            nsq.sort(key=lambda x: float(x.get('time')))
+            threads[ns] = NSThread(args=(nsq, set()))
+            threads[ns].nsid = nsid
+        targets = threads.values()  # XXX hack
+    else:
+        nscycle = itertools.cycle(notestreams)
+        for idx, ns in zip(xrange(number), nscycle):
+            clis = routeset.Route(ns)
+            for cli in clis:
+                nsq = ns.findall('note')
+                nsq.sort(key=lambda x: float(x.get('time')))
+                if ns in threads:
+                    threads[ns]._Thread__args[1].add(cli)
+                else:
+                    threads[ns] = NSThread(args=(nsq, set([cli])))
 
     if options.verbose:
         print 'Playback threads:'
@@ -504,11 +635,31 @@ for fname in args:
             print thr._Thread__args[1]
 
     BASETIME = time.time() - (options.seek*factor)
+    ENDTIME = max(max(float(n.get('time')) + float(n.get('dur')) for n in thr._Thread__args[0]) for thr in threads.values())
+    print 'Playtime is', ENDTIME
     if options.seek > 0:
         for thr in threads.values():
             thr.drop_missed()
-    for thr in threads.values():
-            thr.start()
-    for thr in threads.values():
-            thr.join()
+    spin_phase = 0
+    SPINNERS = ['-', '\\', '|', '/']
+    while not all(thr.done for thr in threads.values()):
+        for thr in threads.values():
+            if thr.next_t is None or factor * thr.next_t <= time.time() - BASETIME:
+                thr.actuate_missed()
+        delta = factor * min(thr.next_t for thr in threads.values() if thr.next_t is not None) + BASETIME - time.time()
+        if delta == float('inf'):
+            print 'WARNING: Infinite postponement detected! Did all notestreams finish?'
+            break
+        if options.verbose:
+            print 'TICK DELTA:', delta
+        else:
+            sys.stdout.write('\x1b[G\x1b[K[%s]' % (
+                ('#' * int((time.time() - BASETIME) * (columns - 2) / (ENDTIME * factor)) + SPINNERS[spin_phase]).ljust(columns - 2),
+            ))
+            sys.stdout.flush()
+            spin_phase += 1
+            if spin_phase >= len(SPINNERS):
+                spin_phase = 0
+        if delta >= 0 and not options.spin:
+            time.sleep(delta)
     print fname, ': Done!'

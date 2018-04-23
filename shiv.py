@@ -8,6 +8,7 @@ import math
 parser = optparse.OptionParser()
 parser.add_option('-n', '--number', dest='number', action='store_true', help='Show number of tracks')
 parser.add_option('-g', '--groups', dest='groups', action='store_true', help='Show group names')
+parser.add_option('-G', '--group', dest='group', action='append', help='Only compute for this group (may be specified multiple times)')
 parser.add_option('-N', '--notes', dest='notes', action='store_true', help='Show number of notes')
 parser.add_option('-M', '--notes-stream', dest='notes_stream', action='store_true', help='Show notes per stream')
 parser.add_option('-m', '--meta', dest='meta', action='store_true', help='Show meta track information')
@@ -23,10 +24,28 @@ parser.add_option('-x', '--aux', dest='aux', action='store_true', help='Show inf
 
 parser.add_option('-a', '--almost-all', dest='almost_all', action='store_true', help='Show useful information')
 parser.add_option('-A', '--all', dest='all', action='store_true', help='Show everything')
+parser.add_option('-t', '--total', dest='total', action='store_true', help='Make cross-file totals')
 
-parser.set_defaults(height=20)
+parser.set_defaults(height=20, group=[])
 
 options, args = parser.parse_args()
+
+if not any((
+    options.number,
+    options.groups,
+    options.notes,
+    options.notes_stream,
+    options.histogram,
+    options.vel_hist,
+    options.duration,
+    options.duty_cycle,
+    options.aux,
+    options.meta,
+    options.histogram_tracks,
+    options.vel_hist_tracks,
+)):
+    print 'No computations specified! Assuming you meant --almost-all...'
+    options.almost_all = True
 
 if options.almost_all or options.all:
     options.number = True
@@ -65,6 +84,7 @@ else:
 def show_hist(values, height=None):
     if not values:
         print '{empty histogram}'
+        return
     if height is None:
         height = options.height
     xs, ys = values.keys(), values.values()
@@ -85,16 +105,29 @@ def show_hist(values, height=None):
         print COL.YELLOW + '\t   ' + ''.join([s[i] if len(s) > i else ' ' for s in xcs]) + COL.NONE
     print
 
+if options.total:
+    tot_note_cnt = 0
+    max_note_cnt = 0
+    tot_pitches = {}
+    tot_velocities = {}
+    tot_dur = 0
+    max_dur = 0
+    tot_streams = 0
+    max_streams = 0
+    tot_notestreams = 0
+    max_notestreams = 0
+    tot_groups = {}
+
 for fname in args:
+    print
+    print 'File :', fname
     try:
         iv = ET.parse(fname).getroot()
-    except IOError:
+    except Exception:
         import traceback
         traceback.print_exc()
         print 'Bad file :', fname, ', skipping...'
         continue
-    print
-    print 'File :', fname
     print '\t<computing...>'
 
     if options.meta:
@@ -115,10 +148,19 @@ for fname in args:
     streams = iv.findall('./streams/stream')
     notestreams = [s for s in streams if s.get('type') == 'ns']
     auxstreams = [s for s in streams if s.get('type') == 'aux']
+    if options.group:
+        print 'NOTE: Restricting results to groups', options.group, 'as requested'
+        notestreams = [ns for ns in notestreams if ns.get('group', '<anonymous>') in options.group]
+
     if options.number:
         print 'Stream count:'
         print '\tNotestreams:', len(notestreams)
         print '\tTotal:', len(streams)
+        if options.total:
+            tot_streams += len(streams)
+            max_streams = max(max_streams, len(streams))
+            tot_notestreams += len(notestreams)
+            max_notestreams = max(max_notestreams, len(notestreams))
 
     if not (options.groups or options.notes or options.histogram or options.histogram_tracks or options.vel_hist or options.vel_hist_tracks or options.duration or options.duty_cycle or options.aux):
         continue
@@ -128,6 +170,8 @@ for fname in args:
         for s in notestreams:
             group = s.get('group', '<anonymous>')
             groups[group] = groups.get(group, 0) + 1
+            if options.total:
+                tot_groups[group] = tot_groups.get(group, 0) + 1
         print 'Groups:'
         for name, cnt in groups.iteritems():
             print '\t{} ({} streams)'.format(name, cnt)
@@ -175,25 +219,34 @@ for fname in args:
         notes = stream.findall('note')
         for note in notes:
             pitch = float(note.get('pitch'))
-            vel = int(note.get('vel'))
+            ampl = int(127 * float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0)))
             time = float(note.get('time'))
             dur = float(note.get('dur'))
             if options.notes:
                 note_cnt += 1
+                if options.total:
+                    tot_note_cnt += 1
             if options.notes_stream:
                 notes_stream[sidx] += 1
             if options.histogram:
                 pitches[pitch] = pitches.get(pitch, 0) + 1
+                if options.total:
+                    tot_pitches[pitch] = tot_pitches.get(pitch, 0) + 1
             if options.histogram_tracks:
                 pitch_tracks[sidx][pitch] = pitch_tracks[sidx].get(pitch, 0) + 1
             if options.vel_hist:
-                velocities[vel] = velocities.get(vel, 0) + 1
+                velocities[ampl] = velocities.get(ampl, 0) + 1
+                if options.total:
+                    tot_velocities[ampl] = tot_velocities.get(ampl, 0) + 1
             if options.vel_hist_tracks:
-                velocities_tracks[sidx][vel] = velocities_tracks[sidx].get(vel, 0) + 1
+                velocities_tracks[sidx][ampl] = velocities_tracks[sidx].get(ampl, 0) + 1
             if (options.duration or options.duty_cycle) and time + dur > max_dur:
                 max_dur = time + dur
             if options.duty_cycle:
                 cum_dur[sidx] += dur
+
+    if options.notes and options.total:
+        max_note_cnt = max(max_note_cnt, note_cnt)
 
     if options.histogram_tracks:
         for sidx, hist in enumerate(pitch_tracks):
@@ -219,3 +272,27 @@ for fname in args:
         show_hist(velocities)
     if options.duration:
         print 'Playing duration: {}'.format(max_dur)
+
+if options.total:
+    print 'Totals:'
+    if options.number:
+        print '\tTotal streams:', tot_streams
+        print '\tMax streams:', max_streams
+        print '\tTotal notestreams:', tot_notestreams
+        print '\tMax notestreams:', max_notestreams
+        print
+    if options.notes:
+        print '\tTotal notes:', tot_note_cnt
+        print '\tMax notes:', max_note_cnt
+        print
+    if options.groups:
+        print '\tGroups:'
+        for grp, cnt in tot_groups.iteritems():
+            print '\t\t', grp, ':', cnt
+        print
+    if options.histogram:
+        print 'Overall pitch histogram:'
+        show_hist(tot_pitches)
+    if options.vel_hist:
+        print 'Overall velocity histogram:'
+        show_hist(tot_velocities)
