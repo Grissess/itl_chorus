@@ -67,6 +67,7 @@ def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
 
 def rgb_for_freq_amp(f, a):
+    a = max((min((a, 1.0)), 0.0))
     pitchval = float(f - options.low_freq) / (options.high_freq - options.low_freq)
     if options.log_base == 0:
         try:

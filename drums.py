@@ -38,6 +38,7 @@ if not args:
 
 def rgb_for_freq_amp(f, a):
     pitchval = float(f - options.low_freq) / (options.high_freq - options.low_freq)
+    a = max((min((a, 1.0)), 0.0))
     if options.log_base == 0:
         try:
             pitchval = math.log(pitchval) / math.log(options.log_base)
