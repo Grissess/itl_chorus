@@ -90,6 +90,7 @@ int main(int argc, char **argv) {
 				break;
 
 			case CMD_CAPS:
+				cmd.cmd = htonl(cmd.cmd);
 				cmd.data[0] = htonl(1);
 				cmd.data[1] = htonl(ident);
 				for(i = 0; i < 6 * sizeof(int); i++) {
