@@ -651,6 +651,18 @@ for fname in args:
                         i += 1
         print '...culled', ev_cnt, 'events'
 
+    print 'Culling empty streams...'
+    st_cnt = 0
+    for group in notegroups:
+        torem = set()
+        for ns in group.streams:
+            if not ns.history:
+                torem.add(ns)
+        st_cnt += len(torem)
+        for rem in torem:
+            group.streams.remove(rem)
+    print '...culled', st_cnt, 'empty streams'
+
     if options.verbose:
         print 'Final group mappings:'
         for group in notegroups:

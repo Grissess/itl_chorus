@@ -16,7 +16,7 @@ parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (nominally [0.0, 1.0], but >1.0 can be used to amplify with possible distortion)')
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Audio sample rate for output and of input files')
 parser.add_option('-u', '--uid', dest='uid', default='', help='User identifier of this client')
-parser.add_option('-p', '--port', dest='port', default=13676, type='int', help='UDP port to listen on')
+parser.add_option('-p', '--port', dest='port', default=13677, type='int', help='UDP port to listen on')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='If a note plays longer than a sample length, keep playing the sample')
 parser.add_option('--cut', dest='cut', action='store_true', help='If a note ends within a sample, stop playing that sample immediately')
 parser.add_option('-n', '--max-voices', dest='max_voices', default=-1, type='int', help='Only support this many notes playing simultaneously (earlier ones get dropped)')
