@@ -130,6 +130,7 @@ def pygame_notes():
     bgrwin.set_colorkey((0, 0, 0))
 
     clock = pygame.time.Clock()
+    font = pygame.font.SysFont(pygame.font.get_default_font(), 24)
 
     while True:
         if options.no_colback:
@@ -180,8 +181,13 @@ def pygame_notes():
         #        break
         #if len(pts) > 2:
         #    pygame.gfxdraw.aapolygon(disp, pts, [0, 255, 0])
+
         disp.blit(bgrwin, (0, 0))
         disp.blit(sampwin, (BGR_WIDTH, 0))
+        if QUEUED_PCM:
+            tsurf = font.render('%08.6f'%(DRIFT_FACTOR,), True, (255, 255, 255), (0, 0, 0))
+            disp.fill((0, 0, 0), tsurf.get_rect())
+            disp.blit(tsurf, (0, 0))
         pygame.display.flip()
 
         for ev in pygame.event.get():
