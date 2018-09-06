@@ -352,7 +352,7 @@ if options.numpy:
 
     def resample(samps, amt):
         samps = numpy.frombuffer(samps, numpy.int32)
-        return numpy.interp(numpy.linspace(0, samps.shape[0], amt, False), numpy.linspace(0, samps.shape[0], samps.shape[0], False), samps).tobytes()
+        return numpy.interp(numpy.linspace(0, samps.shape[0], amt, False), numpy.linspace(0, samps.shape[0], samps.shape[0], False), samps).astype(numpy.int32).tobytes()
 
 else:
     def lin_seq(frm, to, cnt):
