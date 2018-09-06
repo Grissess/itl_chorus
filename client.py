@@ -185,7 +185,7 @@ def pygame_notes():
         disp.blit(bgrwin, (0, 0))
         disp.blit(sampwin, (BGR_WIDTH, 0))
         if QUEUED_PCM:
-            tsurf = font.render('%08.6f'%(DRIFT_FACTOR,), True, (255, 255, 255), (0, 0, 0))
+            tsurf = font.render('%+011.6g'%(DRIFT_FACTOR - 1,), True, (255, 255, 255), (0, 0, 0))
             disp.fill((0, 0, 0), tsurf.get_rect())
             disp.blit(tsurf, (0, 0))
         pygame.display.flip()
