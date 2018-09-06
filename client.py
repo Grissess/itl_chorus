@@ -37,6 +37,7 @@ parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help
 parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
 parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
 parser.add_option('--counter-modulus', dest='counter_modulus', type='int', default=16, help='Number of packet events in period of the terminal color scroll on the left margin')
+parser.add_option('--pcm-corr-rate', dest='pcm_corr_rate', type='float', default=0.05, help='Amount of time to correct buffer drift, measured as percentage of the current sync rate')
 
 options, args = parser.parse_args()
 
@@ -62,6 +63,9 @@ MIN = -0x80000000
 
 EXPIRATIONS = [0] * STREAMS
 QUEUED_PCM = ''
+DRIFT_FACTOR = 1.0
+DRIFT_ERROR = 0.0
+LAST_SYN = None
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
@@ -340,6 +344,10 @@ if options.numpy:
     def mix(a, b):
         return a + b
 
+    def resample(samps, amt):
+        samps = numpy.frombuffer(samps, numpy.int32)
+        return numpy.interp(numpy.linspace(0, samps.shape[0], amt, False), numpy.linspace(0, samps.shape[0], samps.shape[0], False), samps).tobytes()
+
 else:
     def lin_seq(frm, to, cnt):
         step = (to-frm)/float(cnt)
@@ -362,13 +370,37 @@ else:
     def mix(a, b):
         return [min(MAX, max(MIN, i + j)) for i, j in zip(a, b)]
 
+    def resample(samps, amt):
+        isl = len(samps) / 4
+        if isl == amt:
+            return samps
+        arr = struct.unpack(str(isl)+'i', samps)
+        out = []
+        for i in range(amt):
+            effidx = i * (isl / amt)
+            ieffidx = int(effidx)
+            if ieffidx == effidx:
+                out.append(arr[ieffidx])
+            else:
+                frac = effidx - ieffidx
+                out.append(arr[ieffidx] * (1-frac) + arr[ieffidx+1] * frac)
+        return struct.pack(str(amt)+'i', *out)
+
 def gen_data(data, frames, tm, status):
-    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM
+    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR
     if len(QUEUED_PCM) >= frames*4:
-        fdata = QUEUED_PCM[:frames*4]
-        QUEUED_PCM = QUEUED_PCM[frames*4:]
-        LAST_SAMPLES.extend(struct.unpack(str(frames)+'i', fdata))
-        return fdata, pyaudio.paContinue
+        desired_frames = DRIFT_FACTOR * frames
+        err_frames = desired_frames - int(desired_frames)
+        desired_frames = int(desired_frames)
+        DRIFT_ERROR += err_frames
+        if DRIFT_ERROR >= 1.0:
+            desired_frames += 1
+            DRIFT_ERROR -= 1.0
+        fdata = QUEUED_PCM[:desired_frames*4]
+        QUEUED_PCM = QUEUED_PCM[desired_frames*4:]
+        if options.gui:
+            LAST_SAMPLES.extend(struct.unpack(str(desired_frames)+'i', fdata))
+        return resample(fdata, frames), pyaudio.paContinue
     if options.numpy:
         fdata = numpy.zeros((frames,), numpy.int32)
     else:
@@ -434,10 +466,11 @@ while True:
         except socket.error:
             pass
     pkt = Packet.FromStr(data)
-    crgb = [int(i*255) for i in colorsys.hls_to_rgb((float(counter) / options.counter_modulus) % 1.0, 0.5, 1.0)]
-    print '\x1b[38;2;{};{};{}m#'.format(*crgb),
-    counter += 1
-    print '\x1b[mFrom', cli, 'command', pkt.cmd,
+    if pkt.cmd != CMD.PCM:
+        crgb = [int(i*255) for i in colorsys.hls_to_rgb((float(counter) / options.counter_modulus) % 1.0, 0.5, 1.0)]
+        print '\x1b[38;2;{};{};{}m#'.format(*crgb),
+        counter += 1
+        print '\x1b[mFrom', cli, 'command', pkt.cmd,
     if pkt.cmd == CMD.KA:
         print '\x1b[37mKA'
     elif pkt.cmd == CMD.PING:
@@ -474,6 +507,21 @@ while True:
         fdata = data[4:]
         fdata = struct.pack('16i', *[i<<16 for i in struct.unpack('16h', fdata)])
         QUEUED_PCM += fdata
-        print 'Now', len(QUEUED_PCM) / 4.0, 'frames queued'
+        #print 'Now', len(QUEUED_PCM) / 4.0, 'frames queued'
+    elif pkt.cmd == CMD.PCMSYN:
+        print '\x1b[1;37mPCMSYN',
+        bufamt = pkt.data[0]
+        print '\x1b[0m DESBUF={}'.format(bufamt),
+        if LAST_SYN is None:
+            LAST_SYN = time.time()
+        else:
+            dt = time.time() - LAST_SYN
+            dfr = dt * RATE
+            bufnow = len(QUEUED_PCM) / 4
+            print '\x1b[35m CURBUF={}'.format(bufnow),
+            if bufnow != 0:
+                DRIFT_FACTOR = 1.0 + float(bufnow - bufamt) / (bufamt * dfr * options.pcm_corr_rate)
+                print '\x1b[37m (DRIFT_FACTOR=%08.6f)'%(DRIFT_FACTOR,),
+            print
     else:
-        print 'Unknown cmd', pkt.cmd
+        print '\x1b[1;31mUnknown cmd', pkt.cmd

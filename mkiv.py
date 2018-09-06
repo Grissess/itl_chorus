@@ -754,6 +754,9 @@ for fname in args:
     ivargs = ET.SubElement(ivmeta, 'args')
     ivargs.text = ' '.join('%r' % (i,) for i in sys.argv[1:])
 
+    ivapp = ET.SubElement(ivmeta, 'app')
+    ivapp.text = 'mkiv'
+
     print 'Done.'
     txt = ET.tostring(iv, 'UTF-8')
     open(os.path.splitext(os.path.basename(fname))[0]+'.iv', 'wb').write(txt)

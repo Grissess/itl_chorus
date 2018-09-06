@@ -46,14 +46,43 @@ parser.add_option('-n', '--number', dest='number', type='int', help='Number of c
 parser.add_option('--dry', dest='dry', action='store_true', help='Dry run--don\'t actually search for or play to clients, but pretend they exist (useful with -G)')
 parser.add_option('--pcm', dest='pcm', action='store_true', help='Use experimental PCM rendering')
 parser.add_option('--pcm-lead', dest='pcmlead', type='float', help='Seconds of leading PCM data to send')
+parser.add_option('--pcm-sync-every', dest='pcm_sync_every', type='int', help='How many PCM packets to wait before sending a SYNC event with buffer amounts')
 parser.add_option('--spin', dest='spin', action='store_true', help='Ignore delta times in the queue (busy loop the CPU) for higher accuracy')
+parser.add_option('--tapper', dest='tapper', type='float', help='When the main loop would wait this many seconds, wait instead for a keypress')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-width', dest='pg_width', type='int', help='Width of the pygame window')
 parser.add_option('--pg-height', dest='pg_height', type='int', help='Width of the pygame window')
 parser.add_option('--help-routes', dest='help_routes', action='store_true', help='Show help about routing directives')
-parser.set_defaults(routes=['T:DRUM=!perc,0'], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', to=[], ports=[13676, 13677],  pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1)
+parser.set_defaults(routes=['T:DRUM=!perc,0'], random=0.0, rand_low=80, rand_high=2000, live=None, factor=1.0, duration=0.25, volume=1.0, wait_time=0.1, tries=5, play=[], transpose=0, seek=0.0, bind_addr='', to=[], ports=[13676, 13677], tapper=None, pg_width = 0, pg_height = 0, number=-1, pcmlead=0.1, pcm_sync_every=4096)
 options, args = parser.parse_args()
+
+tap_func = None
+play_time = time.time
+if options.tapper is not None:
+    tap_play_time = 0.0
+    play_time = lambda: tap_play_time
+    if sys.platform.startswith('win'):
+        import msvcrt
+
+        tap_func = msvcrt.getch
+
+    else:
+        import termios, tty
+
+# https://stackoverflow.com/questions/1052107/reading-a-single-character-getch-style-in-python-is-not-working-in-unix
+        def unix_tap_func():
+            fd = sys.stdin.fileno()  # 0?
+            prev_settings = termios.tcgetattr(fd)
+            try:
+                mode = prev_settings[:]
+                mode[tty.LFLAG] &= ~(termios.ECHO | termios.ICANON)
+                termios.tcsetattr(fd, termios.TCSAFLUSH, mode)
+                return sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, prev_settings)
+
+        tap_func = unix_tap_func
 
 if options.help_routes:
     print '''Routes are a way of either exclusively or mutually binding certain streams to certain playback clients. They are especially fitting in heterogenous environments where some clients will outperform others in certain pitches or with certain parts.
@@ -77,9 +106,20 @@ The specifier consists of a comma-separated list of attribute-colon-value pairs,
     exit()
 
 GUIS = {}
-BASETIME = time.time()  # XXX fixes a race with the GUI
+BASETIME = play_time()  # XXX fixes a race with the GUI
 
 def gui_pygame():
+    # XXX Racy, do this fast
+    global tap_func
+    key_cond = threading.Condition()
+    if options.tapper is not None:
+
+        def pygame_tap_func():
+            with key_cond:
+                key_cond.wait()
+
+        tap_func = pygame_tap_func
+
     print 'Starting pygame GUI...'
     import pygame, colorsys
     pygame.init()
@@ -125,13 +165,15 @@ def gui_pygame():
             col = [int(i*255) for i in col]
             disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
             idx += 1
-        tsurf = font.render('%0.3f' % ((time.time() - BASETIME) / factor,), True, (255, 255, 255), (0, 0, 0))
+        tsurf = font.render('%0.3f' % ((play_time() - BASETIME) / factor,), True, (255, 255, 255), (0, 0, 0))
         disp.fill((0, 0, 0), tsurf.get_rect())
         disp.blit(tsurf, (0, 0))
         pygame.display.flip()
 
         for ev in pygame.event.get():
             if ev.type == pygame.KEYDOWN:
+                with key_cond:
+                    key_cond.notify()
                 if ev.key == pygame.K_ESCAPE:
                     thread.interrupt_main()
                     pygame.quit()
@@ -387,17 +429,24 @@ for fname in args:
                 buf += nbuf
             return buf
 
-        BASETIME = time.time() - options.pcmlead
+        BASETIME = play_time() - options.pcmlead
         sampcnt = 0
         buf = read_all(pcr, 32)
+        pcnt = 0
         print 'PCM: pcr', pcr, 'BASETIME', BASETIME, 'buf', len(buf)
         while len(buf) >= 32:
             frag = buf[:32]
             buf = buf[32:]
             for cl in clients:
                 s.sendto(struct.pack('>L', CMD.PCM) + frag, cl)
+            pcnt += 1
+            if pcnt >= options.pcm_sync_every:
+                for cl in clients:
+                    s.sendto(str(Packet(CMD.PCMSYN, int(options.pcmlead * samprate))), cl)
+                print 'PCMSYN'
+                pcnt = 0
             sampcnt += len(frag) / 2
-            delay = max(0, BASETIME + (sampcnt / float(samprate)) - time.time())
+            delay = max(0, BASETIME + (sampcnt / float(samprate)) - play_time())
             #print sampcnt, delay
             if delay > 0:
                 time.sleep(delay)
@@ -547,28 +596,32 @@ for fname in args:
                 nsq, cls = self._Thread__args
                 dur = None
                 i = 0
-                while nsq and float(nsq[0].get('time'))*factor <= time.time() - BASETIME:
+                while nsq and float(nsq[0].get('time'))*factor <= play_time() - BASETIME:
                     i += 1
                     note = nsq.pop(0)
                     ttime = float(note.get('time'))
                     pitch = float(note.get('pitch')) + options.transpose
                     ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                     dur = factor*float(note.get('dur'))
+                    pl_dur = dur if options.tapper is None else 65535
                     if options.verbose:
-                        print (time.time() - BASETIME) / options.factor, ': PLAY', pitch, dur, ampl
+                        print (play_time() - BASETIME) / options.factor, ': PLAY', pitch, dur, ampl
                     if options.dry:
                         playing_notes[self.nsid] = (pitch, ampl)
                     else:
                         for cl in cls:
-                            s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
+                            s.sendto(str(Packet(CMD.PLAY, int(pl_dur), int((pl_dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
                             playing_notes[cl] = (pitch, ampl)
                 if i > 0 and dur is not None:
                     self.cur_offt = ttime + dur / options.factor
                 else:
                     if self.cur_offt:
-                        if factor * self.cur_offt <= time.time() - BASETIME:
+                        if factor * self.cur_offt <= play_time() - BASETIME:
                             if options.verbose:
-                                print '% 6.5f'%((time.time() - BASETIME) / factor,), ': DONE'
+                                print '% 6.5f'%((play_time() - BASETIME) / factor,), ': DONE'
+                            if options.tapper is not None:
+                                for cl in cls:
+                                    s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0, cl[2])), cl[:2])
                             self.cur_offt = None
                             if options.dry:
                                 playing_notes[self.nsid] = (0, 0)
@@ -585,7 +638,7 @@ for fname in args:
             def drop_missed(self):
                 nsq, cl = self._Thread__args
                 cnt = 0
-                while nsq and float(nsq[0].get('time'))*factor < time.time() - BASETIME:
+                while nsq and float(nsq[0].get('time'))*factor < play_time() - BASETIME:
                     nsq.pop(0)
                     cnt += 1
                 if options.verbose:
@@ -601,20 +654,20 @@ for fname in args:
                             pitch = float(note.get('pitch')) + options.transpose
                             ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                             dur = factor*float(note.get('dur'))
-                            while time.time() - BASETIME < factor*ttime:
-                                self.wait_for(factor*ttime - (time.time() - BASETIME))
+                            while play_time() - BASETIME < factor*ttime:
+                                self.wait_for(factor*ttime - (play_time() - BASETIME))
                             if options.dry:
                                 cl = self.nsid  # XXX hack
                             else:
                                 for cl in cls:
                                     s.sendto(str(Packet(CMD.PLAY, int(dur), int((dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
                             if options.verbose:
-                                print (time.time() - BASETIME), cl, ': PLAY', pitch, dur, vel
+                                print (play_time() - BASETIME), cl, ': PLAY', pitch, dur, vel
                             playing_notes[cl] = (pitch, ampl)
-                            self.wait_for(dur - ((time.time() - BASETIME) - factor*ttime))
+                            self.wait_for(dur - ((play_time() - BASETIME) - factor*ttime))
                             playing_notes[cl] = (0, 0)
                     if options.verbose:
-                        print '% 6.5f'%(time.time() - BASETIME,), cl, ': DONE'
+                        print '% 6.5f'%(play_time() - BASETIME,), cl, ': DONE'
 
     threads = {}
     if options.dry:
@@ -641,7 +694,7 @@ for fname in args:
         for thr in threads.values():
             print thr._Thread__args[1]
 
-    BASETIME = time.time() - (options.seek*factor)
+    BASETIME = play_time() - (options.seek*factor)
     ENDTIME = max(max(float(n.get('time')) + float(n.get('dur')) for n in thr._Thread__args[0]) for thr in threads.values())
     print 'Playtime is', ENDTIME
     if options.seek > 0:
@@ -651,9 +704,9 @@ for fname in args:
     SPINNERS = ['-', '\\', '|', '/']
     while not all(thr.done for thr in threads.values()):
         for thr in threads.values():
-            if thr.next_t is None or factor * thr.next_t <= time.time() - BASETIME:
+            if thr.next_t is None or factor * thr.next_t <= play_time() - BASETIME:
                 thr.actuate_missed()
-        delta = factor * min(thr.next_t for thr in threads.values() if thr.next_t is not None) + BASETIME - time.time()
+        delta = factor * min(thr.next_t for thr in threads.values() if thr.next_t is not None) + BASETIME - play_time()
         if delta == float('inf'):
             print 'WARNING: Infinite postponement detected! Did all notestreams finish?'
             break
@@ -661,12 +714,21 @@ for fname in args:
             print 'TICK DELTA:', delta
         else:
             sys.stdout.write('\x1b[G\x1b[K[%s]' % (
-                ('#' * int((time.time() - BASETIME) * (columns - 2) / (ENDTIME * factor)) + SPINNERS[spin_phase]).ljust(columns - 2),
+                ('#' * int((play_time() - BASETIME) * (columns - 2) / (ENDTIME * factor)) + SPINNERS[spin_phase]).ljust(columns - 2),
             ))
             sys.stdout.flush()
             spin_phase += 1
             if spin_phase >= len(SPINNERS):
                 spin_phase = 0
         if delta >= 0 and not options.spin:
-            time.sleep(delta)
+            if tap_func is not None:
+                if delta >= options.tapper:
+                    if options.verbose:
+                        print 'TAP'
+                    tap_func()
+                else:
+                    time.sleep(delta)
+                tap_play_time += delta
+            else:
+                time.sleep(delta)
     print fname, ': Done!'
