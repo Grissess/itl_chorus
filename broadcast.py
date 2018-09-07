@@ -162,7 +162,7 @@ def gui_pygame():
         for cli, note in sorted(playing_notes.items(), key = lambda pair: pair[0]):
             pitch = note[0]
             col = colorsys.hls_to_rgb(float(idx) / len(targets), note[1]/2.0, 1.0)
-            col = [int(i*255) for i in col]
+            col = [min(max(int(i*255), 0), 255) for i in col]
             disp.fill(col, (WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
             idx += 1
         tsurf = font.render('%0.3f' % ((play_time() - BASETIME) / factor,), True, (255, 255, 255), (0, 0, 0))

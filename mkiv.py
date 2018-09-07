@@ -46,7 +46,14 @@ parser.add_option('--slack', dest='slack', type='float', help='Inflate the durat
 parser.add_option('--vol-pow', dest='vol_pow', type='float', help='Exponent to raise volume changes (adjusts energy per delta volume)')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
 parser.add_option('--no-text', dest='no_text', action='store_true', help='Disable text streams (useful for unusual text encodings)')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, vol_pow=2)
+parser.add_option('--no-wav', dest='no_wav', action='store_true', help='Disable processing of WAVE files')
+parser.add_option('--wav-winf', dest='wav_winf', help='Window function (on numpy) to use for FFT calculation')
+parser.add_option('--wav-frames', dest='wav_frames', type='int', help='Number of frames to read per FFT calculation')
+parser.add_option('--wav-window', dest='wav_window', type='int', help='Size of the FFT window')
+parser.add_option('--wav-streams', dest='wav_streams', type='int', help='Number of output streams to generate for the interval file')
+parser.add_option('--wav-log-width', dest='wav_log_width', type='float', help='Width of the correcting exponent--positive prefers high frequencies, negative prefers lower')
+parser.add_option('--wav-log-base', dest='wav_log_base', type='float', help='Base of the logarithm used to scale low frequencies')
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -107,6 +114,47 @@ if options.fuckit:
     midi.read_midifile = fuckit(midi.read_midifile)
 
 for fname in args:
+    if fname.endswith('.wav') and not options.no_wav:
+        import wave, struct
+        import numpy as np
+        wf = wave.open(fname, 'rb')
+        chan, width, rate, frames, cmptype, cmpname = wf.getparams()
+        print fname, ': WAV file, ', chan, 'channels,', width, 'sample width,', rate, 'sample rate,', frames, 'total frames,', cmpname
+        sty = [None, np.int8, np.int16, None, np.int32][width]
+        window = np.zeros((options.wav_window,))
+        cnt = 0
+        freqs = []
+        amps = []
+        winf = getattr(np, options.wav_winf)(options.wav_window)
+        freqwin = np.fft.rfftfreq(options.wav_window, 1.0 / rate)[1:]
+        logwin = np.logspace(-options.wav_log_width, options.wav_log_width, len(freqwin), True, options.wav_log_base)
+        while True:
+            sampsraw = wf.readframes(options.wav_frames)
+            cnt += len(sampsraw) / (width * chan)
+            if len(sampsraw) < options.wav_frames * chan * width:
+                break
+            window = np.concatenate((window, np.frombuffer(sampsraw, dtype=sty)[::chan] / float(1 << (width * 8 - 1))))[-options.wav_window:]
+            spect = logwin * (np.abs(np.fft.rfft(winf * window)) / options.wav_window)[1:]
+            amspect = np.argsort(spect)[:-(options.wav_streams + 1):-1]
+            freqs.append(freqwin[amspect])
+            amps.append(spect[amspect] * (options.wav_window / float(options.wav_streams)))
+        print 'Processed', cnt, 'frames'
+        period = options.wav_frames / float(rate)
+        print 'Period:', period, 'sec'
+        iv = ET.Element('iv', version='1', src=os.path.basename(fname), wav='1')
+        ivstreams = ET.SubElement(iv, 'streams')
+        streams = [ET.SubElement(ivstreams, 'stream', type='ns') for i in range(options.wav_streams)]
+        t = 0
+        for fs, ams in zip(freqs, amps):
+            if options.debug:
+                print 'Sample at t={}: {}'.format(t, list(zip(fs, ams)))
+            for stm, frq, amp in zip(streams, fs, ams):
+                ivnote = ET.SubElement(stm, 'note', pitch=str(12*math.log(frq/440.0, 2)+69), amp=str(amp), vel=str(int(amp * 127.0)), time=str(t), dur=str(period))
+            t += period
+        print 'Writing...'
+        open(os.path.splitext(os.path.basename(fname))[0] + '.iv', 'wb').write(ET.tostring(iv, 'UTF-8'))
+        print 'Done.'
+        continue
     try:
         pat = midi.read_midifile(fname)
     except Exception:
