@@ -314,6 +314,76 @@ class phase_off(object):
     def __call__(self, theta):
         return self.gen((theta + self.offset) % (2*math.pi))
 
+@generator('Normally distributed random-inversion square waves (chorus effect)', '(<sigma>)')
+class nd_square_wave(object):
+    def __init__(self, sig):
+        self.sig = sig
+        self.invt = 0
+        self.lastp = 2*math.pi
+    def __call__(self, theta):
+        if theta < self.lastp:
+            self.invt = random.normalvariate(math.pi, self.sig)
+        self.lastp = theta
+        return -1 if theta < self.invt else 1
+
+@generator('Normally distributed random-point triangle waves (chorus effect)', '(<sigma>)')
+class nd_tri_wave(object):
+    def __init__(self, sig):
+        self.sig = sig
+        self.p1 = 0.5*math.pi
+        self.p2 = 1.5*math.pi
+        self.lastp = 2*math.pi
+    def __call__(self, theta):
+        if theta < self.lastp:
+            self.p1 = random.normalvariate(0.5*math.pi, self.sig)
+            self.p2 = random.normalvariate(1.5*math.pi, self.sig)
+        self.lastp = theta
+        if theta < self.p1:
+            return lin_interp(0, 1, theta / self.p1)
+        elif theta < self.p2:
+            return lin_interp(1, -1, (theta - self.p1) / (self.p2 - self.p1))
+        else:
+            return lin_interp(-1, 0, (theta - self.p2) / (2*math.pi - self.p2))
+
+@generator('Random phase offset', '(<generator>, <noise factor>)')
+class rand_phase_off(object):
+    def __init__(self, gen, fac):
+        self.gen = gen
+        self.fac = fac
+    def __call__(self, theta):
+        return self.gen((theta + self.fac * random.random()) % (2*math.pi))
+
+@generator('Infinite Impulse Response low pass filter', '(<generator>, <RC normalized to dt=1 sample>)')
+class lowpass(object):
+    def __init__(self, gen, rc):
+        self.gen = gen
+        self.alpha = 1.0 / (rc + 1)
+        self.last = 0
+    def __call__(self, theta):
+        self.last += self.alpha * (self.gen(theta) - self.last)
+        return self.last
+
+@generator('Infinite Impulse Response high pass filter', '(<generator>, <RC normalized to dt=1 sample>)')
+class highpass(object):
+    def __init__(self, gen, rc):
+        self.gen = gen
+        self.alpha = rc / (rc + 1.0)
+        self.last = 0
+        self.lastx = 0
+    def __call__(self, theta):
+        x = self.gen(theta)
+        self.last = self.alpha * (self.last + x - self.lastx)
+        self.lastx = x
+        return self.last
+
+@generator('Applies a function to itself repeatedly; often used with filters', '(<times>, <func>, <inner>, <extra arg 1>, <extra arg 2>, ...)')
+def order(n, f, i, *args):
+    cur = f(i, *args)
+    while n > 0:
+        cur = f(cur, *args)
+        n -= 1
+    return cur
+
 if options.generators:
     for item in GENERATORS:
         print item['name'],
