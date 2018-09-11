@@ -15,7 +15,7 @@ import threading
 import thread
 import colorsys
 
-from packet import Packet, CMD, stoi
+from packet import Packet, CMD, PLF, stoi
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test sequence (440,<rest>,880,440), then exit')
@@ -28,6 +28,10 @@ parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, he
 parser.add_option('-n', '--streams', dest='streams', type='int', default=1, help='Set the number of streams this client will play back')
 parser.add_option('-N', '--numpy', dest='numpy', action='store_true', help='Use numpy acceleration')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
+parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
+parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', help='Apply uniform random offsets (in MIDI pitch space)')
+parser.add_option('--vibrato', dest='vibrato', default=0.0, type='float', help='Apply periodic perturbances in pitch space by this amplitude (in MIDI pitches)')
+parser.add_option('--vibrato-freq', dest='vibrato_freq', default=6.0, type='float', help='Frequency of the vibrato perturbances in Hz')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
 parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the width of the bargraph pane (by default display width / 2)')
@@ -483,6 +487,10 @@ def gen_data(data, frames, tm, status):
         fdata = [0] * frames
     for i in range(STREAMS):
         FREQ = FREQS[i]
+        if options.vibrato > 0 and FREQ > 0:
+            midi = 12 * math.log(FREQ / 440.0, 2) + 69
+            midi += options.vibrato * math.sin(time.time() * 2 * math.pi * options.vibrato_freq + i * 2 * math.pi / STREAMS)
+            FREQ = 440.0 * 2 ** ((midi - 69) / 12)
         LAST_SAMP = LAST_SAMPS[i]
         AMP = AMPS[i]
         EXPIRATION = EXPIRATIONS[i]
@@ -492,7 +500,6 @@ def gen_data(data, frames, tm, status):
                 FREQ = 0
                 FREQS[i] = 0
         if FREQ == 0:
-            PHASES[i] = 0
             if LAST_SAMP != 0:
                 vdata = lin_seq(LAST_SAMP, 0, frames)
                 fdata = mix(fdata, vdata)
@@ -558,9 +565,19 @@ while True:
     elif pkt.cmd == CMD.PLAY:
         voice = pkt.data[4]
         dur = pkt.data[0]+pkt.data[1]/1000000.0
-        FREQS[voice] = pkt.data[2]
-        AMPS[voice] = MAX * max(min(pkt.as_float(3), 1.0), 0.0)
+        freq = pkt.data[2]
+        if options.chorus > 0:
+            midi = 12 * math.log(freq / 440.0, 2) + 69
+            midi += (random.random() * 2 - 1) * options.chorus
+            freq = 440.0 * 2 ** ((midi - 69) / 12)
+        FREQS[voice] = freq
+        amp = pkt.as_float(3)
+        if options.clamp:
+            amp = max(min(amp, 1.0), 0.0)
+        AMPS[voice] = MAX * amp
         EXPIRATIONS[voice] = time.time() + dur
+        if not (pkt.data[5] & PLF.SAMEPHASE):
+            PHASES[voice] = 0.0
         vrgb = [int(i*255) for i in colorsys.hls_to_rgb(float(voice) / STREAMS * 2.0 / 3.0, 0.5, 1.0)]
         frgb = rgb_for_freq_amp(pkt.data[2], pkt.as_float(3))
         print '\x1b[1;32mPLAY',

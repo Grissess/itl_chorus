@@ -166,7 +166,7 @@ for fname in args:
         print fname, ': Too fucked to continue'
         continue
     iv = ET.Element('iv')
-    iv.set('version', '1')
+    iv.set('version', '1.1')
     iv.set('src', os.path.basename(fname))
     print fname, ': MIDI format,', len(pat), 'tracks'
     if options.verbose:
@@ -364,39 +364,43 @@ for fname in args:
     print 'Generating streams...'
 
     class DurationEvent(MergeEvent):
-        __slots__ = ['duration', 'real_duration', 'pitch', 'modwheel', 'ampl']
-        def __init__(self, me, pitch, ampl, dur, modwheel=0):
+        __slots__ = ['duration', 'real_duration', 'pitch', 'modwheel', 'ampl', 'parent']
+        def __init__(self, me, pitch, ampl, dur, modwheel=0, parent=None):
             MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog, me.mw)
             self.pitch = pitch
             self.ampl = ampl
             self.duration = dur
             self.real_duration = dur
             self.modwheel = modwheel
+            self.parent = parent
 
         def __repr__(self):
             return '<NE %s P:%f A:%f D:%f W:%f>'%(MergeEvent.__repr__(self), self.pitch, self.ampl, self.duration, self.modwheel)
 
     class NoteStream(object):
-        __slots__ = ['history', 'active', 'bentpitch', 'modwheel']
+        __slots__ = ['history', 'active', 'bentpitch', 'modwheel', 'prevparent']
         def __init__(self):
             self.history = []
             self.active = None
             self.bentpitch = None
             self.modwheel = 0
+            self.prevparent = None
         def IsActive(self):
             return self.active is not None
-        def Activate(self, mev, bentpitch=None, modwheel=None):
+        def Activate(self, mev, bentpitch=None, modwheel=None, parent=None):
             if bentpitch is None:
                 bentpitch = mev.ev.pitch
             self.active = mev
             self.bentpitch = bentpitch
             if modwheel is not None:
                 self.modwheel = modwheel
+            self.prevparent = parent
         def Deactivate(self, mev):
-            self.history.append(DurationEvent(self.active, self.bentpitch, self.active.ev.velocity / 127.0, mev.abstime - self.active.abstime, self.modwheel))
+            self.history.append(DurationEvent(self.active, self.bentpitch, self.active.ev.velocity / 127.0, mev.abstime - self.active.abstime, self.modwheel, self.prevparent))
             self.active = None
             self.bentpitch = None
             self.modwheel = 0
+            self.prevparent = None
         def WouldDeactivate(self, mev):
             if not self.IsActive():
                 return False
@@ -492,9 +496,10 @@ for fname in args:
             for group in notegroups:
                 for stream in group.streams:
                     if stream.WouldDeactivate(mev):
-                        base = stream.active.copy(abstime=mev.abstime)
+                        old = stream.active
+                        base = old.copy(abstime=mev.abstime)
                         stream.Deactivate(mev)
-                        stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / float(0x2000)))
+                        stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / float(0x2000)), parent=old)
                         found = True
             if not found:
                 print 'WARNING: Did not find any matching active streams for %r'%(mev,)
@@ -509,9 +514,10 @@ for fname in args:
             for group in notegroups:
                 for stream in group.streams:
                     if stream.WouldDeactivate(mev):
-                        base = stream.active.copy(abstime=mev.abstime)
+                        old = stream.active
+                        base = old.copy(abstime=mev.abstime)
                         stream.Deactivate(mev)
-                        stream.Activate(base, stream.bentpitch, mev.mw)
+                        stream.Activate(base, stream.bentpitch, mev.mw, parent=old)
                         found = True
             if not found:
                 print 'WARNING: Did not find any matching active streams for %r'%(mev,)
@@ -582,7 +588,7 @@ for fname in args:
                                 t = origtime
                             else:
                                 t = dt
-                            events.append(DurationEvent(dev, realpitch + mwamp * options.modfdev * math.sin(2 * math.pi * options.modffreq * t), realamp + mwamp * options.modadev * (math.sin(2 * math.pi * options.modafreq * t) - 1.0) / 2.0, min(options.modres, dev.duration - dt), dev.modwheel))
+                            events.append(DurationEvent(dev, realpitch + mwamp * options.modfdev * math.sin(2 * math.pi * options.modffreq * t), realamp + mwamp * options.modadev * (math.sin(2 * math.pi * options.modafreq * t) - 1.0) / 2.0, min(options.modres, dev.duration - dt), dev.modwheel, dev))
                             dt += options.modres
                         ns.history[i:i+1] = events
                         i += len(events)
@@ -617,7 +623,7 @@ for fname in args:
                     events = []
                     while dt < dev.duration and ampf * dev.ampl >= options.stringthres:
                         dev.abstime = origtime + dt
-                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, min(options.stringres, dev.duration - dt), dev.modwheel))
+                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, min(options.stringres, dev.duration - dt), dev.modwheel, dev))
                         if len(events) > options.stringmax:
                             print 'WARNING: Exceeded maximum string model events for event', i
                             if options.verbose:
@@ -629,7 +635,7 @@ for fname in args:
                     dt = dev.duration
                     while ampf * dev.ampl >= options.stringthres:
                         dev.abstime = origtime + dt
-                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, options.stringres, dev.modwheel))
+                        events.append(DurationEvent(dev, dev.pitch, ampf * dev.ampl, options.stringres, dev.modwheel, dev))
                         if len(events) > options.stringmax:
                             print 'WARNING: Exceeded maximum string model events for event', i
                             if options.verbose:
@@ -771,12 +777,14 @@ for fname in args:
                     if group.name is not None:
                             ivns.set('group', group.name)
                     for note in ns.history:
-                            ivnote = ET.SubElement(ivns, 'note')
+                            ivnote = ET.SubElement(ivns, 'note', id=str(id(note)))
                             ivnote.set('pitch', str(note.pitch))
                             ivnote.set('vel', str(int(note.ampl * 127.0)))
                             ivnote.set('ampl', str(note.ampl))
                             ivnote.set('time', str(note.abstime))
                             ivnote.set('dur', str(note.real_duration))
+                            if note.parent:
+                                ivnote.set('parent', str(id(note.parent)))
 
     if not options.no_text:
         ivtext = ET.SubElement(ivstreams, 'stream', type='text')

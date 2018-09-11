@@ -11,7 +11,7 @@ import itertools
 import re
 import os
 
-from packet import Packet, CMD, itos, OBLIGATE_POLYPHONE
+from packet import Packet, CMD, PLF, itos, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test tone (440, 880) on all clients in sequence (the last overlaps with the first of the next)')
@@ -32,6 +32,7 @@ parser.add_option('-V', '--volume', dest='volume', type='float', help='Master vo
 parser.add_option('-s', '--silence', dest='silence', action='store_true', help='Instruct all clients to stop playing any active tones')
 parser.add_option('-S', '--seek', dest='seek', type='float', help='Start time in seconds (scaled by --factor)')
 parser.add_option('-f', '--factor', dest='factor', type='float', help='Rescale time by this factor (0<f<1 are faster; 0.5 is twice the speed, 2 is half)')
+parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
 parser.add_option('-r', '--route', dest='routes', action='append', help='Add a routing directive (see --route-help)')
 parser.add_option('--clear-routes', dest='routes', action='store_const', const=[], help='Clear routes previously specified (including the default)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; dump events and actual time (can slow down performance!)')
@@ -609,8 +610,14 @@ for fname in args:
                     if options.dry:
                         playing_notes[self.nsid] = (pitch, ampl)
                     else:
+                        amp = ampl * options.volume
+                        if options.clamp:
+                            amp = max(min(amp, 1.0), 0.0)
+                        flags = 0
+                        if note.get('parent', None):
+                            flags |= PLF.SAMEPHASE
                         for cl in cls:
-                            s.sendto(str(Packet(CMD.PLAY, int(pl_dur), int((pl_dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), ampl * options.volume, cl[2])), cl[:2])
+                            s.sendto(str(Packet(CMD.PLAY, int(pl_dur), int((pl_dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), amp, cl[2], flags)), cl[:2])
                             playing_notes[cl] = (pitch, ampl)
                 if i > 0 and dur is not None:
                     self.cur_offt = ttime + dur / options.factor

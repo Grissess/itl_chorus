@@ -22,10 +22,13 @@ class CMD:
 	KA = 0 # No important data
 	PING = 1 # Data are echoed exactly
 	QUIT = 2 # No important data
-	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0.0 - 1.0), port
+	PLAY = 3 # seconds, microseconds, frequency (Hz), amplitude (0.0 - 1.0), port, flags
         CAPS = 4 # ports, client type (1), user ident (2-7)
         PCM = 5 # 16 samples, encoded S16_LE
         PCMSYN = 6 # number of samples which should be buffered right now
+
+class PLF:
+        SAMEPHASE = 0x1
 
 def itos(i):
     return struct.pack('>L', i).rstrip('\0')

@@ -17,6 +17,7 @@ parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, he
 parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='Audio sample rate for output and of input files')
 parser.add_option('-u', '--uid', dest='uid', default='', help='User identifier of this client')
 parser.add_option('-p', '--port', dest='port', default=13677, type='int', help='UDP port to listen on')
+parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='If a note plays longer than a sample length, keep playing the sample')
 parser.add_option('--cut', dest='cut', action='store_true', help='If a note ends within a sample, stop playing that sample immediately')
 parser.add_option('-n', '--max-voices', dest='max_voices', default=-1, type='int', help='Only support this many notes playing simultaneously (earlier ones get dropped)')
@@ -184,7 +185,9 @@ while True:
             dframes = max(dframes, rframes)
         if not options.cut:
             dframes = rframes * ((dframes + rframes - 1) / rframes)
-        amp = max(min(options.volume * pkt.as_float(3), 1.0), 0.0)
+        amp = options.volume * pkt.as_float(3)
+        if options.clamp:
+            amp = max(min(amp, 1.0), 0.0)
         PLAYING.append(SampleReader(rdata, dframes * 4, amp))
         if options.max_voices >= 0:
             while len(PLAYING) > options.max_voices:
