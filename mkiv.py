@@ -290,7 +290,7 @@ for fname in args:
             args.update(kwargs)
             return MergeEvent(**args)
         def __repr__(self):
-            return '<ME %r in %d on (%d:%d) MW:%d @%f par %r>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime, self.par)
+            return '<ME %r in %d on (%d:%d) MW:%d @%f par %r>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime, None if self.par is None else id(self.par))
 
     vol_at = [[{0: 0x3FFF} for i in range(16)] for j in range(len(pat))]
 
