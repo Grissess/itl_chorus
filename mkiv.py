@@ -342,7 +342,7 @@ for fname in args:
                     lvtime, lvol = sorted(vol_at[tidx][ev.channel].items(), key = lambda pair: pair[0])[-1]
                     vol_at[tidx][ev.channel][abstime] = (0x3F80 & lvol) | ev.value
                     chg_vol[tidx][ev.channel] += 1
-                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel], events[-1]))
+                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel], events[-1] if events else None))
                 ev_cnts[tidx][ev.channel] += 1
             elif isinstance(ev, midi.MetaEventWithText):
                 events.append(MergeEvent(ev, tidx, abstime))
