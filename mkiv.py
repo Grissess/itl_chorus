@@ -276,20 +276,21 @@ for fname in args:
         return rt
 
     class MergeEvent(object):
-        __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog', 'mw']
-        def __init__(self, ev, tidx, abstime, bank=0, prog=0, mw=0):
+        __slots__ = ['ev', 'tidx', 'abstime', 'bank', 'prog', 'mw', 'par']
+        def __init__(self, ev, tidx, abstime, bank=0, prog=0, mw=0, par=None):
             self.ev = ev
             self.tidx = tidx
             self.abstime = abstime
             self.bank = bank
             self.prog = prog
             self.mw = mw
+            self.par = par
         def copy(self, **kwargs):
-            args = {'ev': self.ev, 'tidx': self.tidx, 'abstime': self.abstime, 'bank': self.bank, 'prog': self.prog, 'mw': self.mw}
+            args = {'ev': self.ev, 'tidx': self.tidx, 'abstime': self.abstime, 'bank': self.bank, 'prog': self.prog, 'mw': self.mw, 'par': self.par}
             args.update(kwargs)
             return MergeEvent(**args)
         def __repr__(self):
-            return '<ME %r in %d on (%d:%d) MW:%d @%f>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime)
+            return '<ME %r in %d on (%d:%d) MW:%d @%f par %r>'%(self.ev, self.tidx, self.bank, self.prog, self.mw, self.abstime, self.par)
 
     vol_at = [[{0: 0x3FFF} for i in range(16)] for j in range(len(pat))]
 
@@ -341,7 +342,7 @@ for fname in args:
                     lvtime, lvol = sorted(vol_at[tidx][ev.channel].items(), key = lambda pair: pair[0])[-1]
                     vol_at[tidx][ev.channel][abstime] = (0x3F80 & lvol) | ev.value
                     chg_vol[tidx][ev.channel] += 1
-                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel]))
+                events.append(MergeEvent(ev, tidx, abstime, cur_bank[tidx][ev.channel], cur_prog[tidx][ev.channel], cur_mw[tidx][ev.channel], events[-1]))
                 ev_cnts[tidx][ev.channel] += 1
             elif isinstance(ev, midi.MetaEventWithText):
                 events.append(MergeEvent(ev, tidx, abstime))
@@ -364,18 +365,17 @@ for fname in args:
     print 'Generating streams...'
 
     class DurationEvent(MergeEvent):
-        __slots__ = ['duration', 'real_duration', 'pitch', 'modwheel', 'ampl', 'parent']
-        def __init__(self, me, pitch, ampl, dur, modwheel=0, parent=None):
-            MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog, me.mw)
+        __slots__ = ['duration', 'real_duration', 'pitch', 'modwheel', 'ampl']
+        def __init__(self, me, pitch, ampl, dur, modwheel=0, par=None):
+            MergeEvent.__init__(self, me.ev, me.tidx, me.abstime, me.bank, me.prog, me.mw, par)
             self.pitch = pitch
             self.ampl = ampl
             self.duration = dur
             self.real_duration = dur
             self.modwheel = modwheel
-            self.parent = parent
 
         def __repr__(self):
-            return '<NE %s P:%f A:%f D:%f W:%f>'%(MergeEvent.__repr__(self), self.pitch, self.ampl, self.duration, self.modwheel)
+            return '<DE %s P:%f A:%f D:%f W:%f>'%(MergeEvent.__repr__(self), self.pitch, self.ampl, self.duration, self.modwheel)
 
     class NoteStream(object):
         __slots__ = ['history', 'active', 'bentpitch', 'modwheel', 'prevparent']
@@ -783,8 +783,8 @@ for fname in args:
                             ivnote.set('ampl', str(note.ampl))
                             ivnote.set('time', str(note.abstime))
                             ivnote.set('dur', str(note.real_duration))
-                            if note.parent:
-                                ivnote.set('parent', str(id(note.parent)))
+                            if note.par:
+                                ivnote.set('par', str(id(note.par)))
 
     if not options.no_text:
         ivtext = ET.SubElement(ivstreams, 'stream', type='text')
