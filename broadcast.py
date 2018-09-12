@@ -614,7 +614,7 @@ for fname in args:
                         if options.clamp:
                             amp = max(min(amp, 1.0), 0.0)
                         flags = 0
-                        if note.get('parent', None):
+                        if note.get('par', None):
                             flags |= PLF.SAMEPHASE
                         for cl in cls:
                             s.sendto(str(Packet(CMD.PLAY, int(pl_dur), int((pl_dur*1000000)%1000000), int(440.0 * 2**((pitch-69)/12.0)), amp, cl[2], flags)), cl[:2])

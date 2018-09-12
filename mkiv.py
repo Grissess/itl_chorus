@@ -43,6 +43,7 @@ parser.add_option('--string-threshold', dest='stringthres', type='float', help='
 parser.add_option('--tempo', dest='tempo', help='Adjust interpretation of tempo (try "f1"/"global", "f2"/"track")')
 parser.add_option('--epsilon', dest='epsilon', type='float', help='Don\'t consider overlaps smaller than this number of seconds (which regularly happen due to precision loss)')
 parser.add_option('--slack', dest='slack', type='float', help='Inflate the duration of events by this much when scheduling them--this is for clients which need time to release their streams')
+parser.add_option('--real-slack', dest='real_slack', type='float', help='Add this much time to each real note with the intent of causing small overlaps, allowing clients to maintain phase consistency at high event rates')
 parser.add_option('--vol-pow', dest='vol_pow', type='float', help='Exponent to raise volume changes (adjusts energy per delta volume)')
 parser.add_option('-0', '--keep-empty', dest='keepempty', action='store_true', help='Keep (do not cull) events with 0 duration in the output file')
 parser.add_option('--no-text', dest='no_text', action='store_true', help='Disable text streams (useful for unusual text encodings)')
@@ -53,7 +54,7 @@ parser.add_option('--wav-window', dest='wav_window', type='int', help='Size of t
 parser.add_option('--wav-streams', dest='wav_streams', type='int', help='Number of output streams to generate for the interval file')
 parser.add_option('--wav-log-width', dest='wav_log_width', type='float', help='Width of the correcting exponent--positive prefers high frequencies, negative prefers lower')
 parser.add_option('--wav-log-base', dest='wav_log_base', type='float', help='Base of the logarithm used to scale low frequencies')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0)
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, real_slack=0.001, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0)
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -782,7 +783,7 @@ for fname in args:
                             ivnote.set('vel', str(int(note.ampl * 127.0)))
                             ivnote.set('ampl', str(note.ampl))
                             ivnote.set('time', str(note.abstime))
-                            ivnote.set('dur', str(note.real_duration))
+                            ivnote.set('dur', str(note.real_duration + options.real_slack))
                             if note.par:
                                 ivnote.set('par', str(id(note.par)))
 

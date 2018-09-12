@@ -56,6 +56,7 @@ UID = options.uid
 LAST_SAMPS = [0] * STREAMS
 LAST_SAMPLES = []
 FREQS = [0] * STREAMS
+REAL_FREQS = [0] * STREAMS
 PHASES = [0] * STREAMS
 RATE = options.rate
 FPB = 64
@@ -142,7 +143,7 @@ def pygame_notes():
         else:
             gap = WIDTH / STREAMS
             for i in xrange(STREAMS):
-                FREQ = FREQS[i]
+                FREQ = REAL_FREQS[i]
                 AMP = AMPS[i]
                 if FREQ > 0:
                     bgcol = rgb_for_freq_amp(FREQ, float(AMP) / MAX)
@@ -154,7 +155,7 @@ def pygame_notes():
         bgrwin.scroll(-1, 0)
         bgrwin.fill((0, 0, 0), (BGR_WIDTH - 1, 0, 1, HEIGHT))
         for i in xrange(STREAMS):
-            FREQ = FREQS[i]
+            FREQ = REAL_FREQS[i]
             AMP = AMPS[i]
             if FREQ > 0:
                 try:
@@ -163,7 +164,7 @@ def pygame_notes():
                     pitch = 0
             else:
                 pitch = 0
-            col = [int((AMP / MAX) * 255)] * 3
+            col = [min(max(int((AMP / MAX) * 255), 0), 255)] * 3
             bgrwin.fill(col, (BGR_WIDTH - 1, HEIGHT - pitch * PFAC - PFAC, 1, PFAC))
 
         sampwin.scroll(-len(LAST_SAMPLES), 0)
@@ -491,6 +492,7 @@ def gen_data(data, frames, tm, status):
             midi = 12 * math.log(FREQ / 440.0, 2) + 69
             midi += options.vibrato * math.sin(time.time() * 2 * math.pi * options.vibrato_freq + i * 2 * math.pi / STREAMS)
             FREQ = 440.0 * 2 ** ((midi - 69) / 12)
+        REAL_FREQS[i] = FREQ
         LAST_SAMP = LAST_SAMPS[i]
         AMP = AMPS[i]
         EXPIRATION = EXPIRATIONS[i]
@@ -583,6 +585,8 @@ while True:
         print '\x1b[1;32mPLAY',
         print '\x1b[1;38;2;{};{};{}mVOICE'.format(*vrgb), '{:03}'.format(voice),
         print '\x1b[1;38;2;{};{};{}mFREQ'.format(*frgb), '{:04}'.format(pkt.data[2]), 'AMP', '%08.6f'%pkt.as_float(3),
+        if pkt.data[5] & PLF.SAMEPHASE:
+            print '\x1b[1;37mSAMEPHASE',
         if pkt.data[0] == 0 and pkt.data[1] == 0:
             print '\x1b[1;35mSTOP!!!'
         else:
