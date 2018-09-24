@@ -27,6 +27,7 @@ parser.add_option('-p', '--program-split', dest='tracks', action='append_const',
 parser.add_option('-P', '--percussion', dest='perc', help='Which percussion standard to use to automatically filter to "perc" (GM, GM2, or none)')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true', help='Be verbose; show important parts about the MIDI scheduling process')
+parser.add_option('-q', '--quiet', dest='quiet', action='store_true', help='Be quiet; don\'t log certain high-volume outputs')
 parser.add_option('-d', '--debug', dest='debug', action='store_true', help='Debugging output; show excessive output about the MIDI scheduling process (please use less or write to a file)')
 parser.add_option('-D', '--deviation', dest='deviation', type='int', help='Amount (in semitones/MIDI pitch units) by which a fully deflected pitchbend modifies the base pitch (0 disables pitchbend processing)')
 parser.add_option('-M', '--modwheel-freq-dev', dest='modfdev', type='float', help='Amount (in semitones/MIDI pitch unites) by which a fully-activated modwheel modifies the base pitch')
@@ -485,7 +486,8 @@ for fname in args:
                 if found:
                     break
             else:
-                print 'WARNING: Did not match %r with any stream deactivation.'%(mev,)
+                if not options.quiet:
+                    print 'WARNING: Did not match %r with any stream deactivation.'%(mev,)
                 if options.verbose:
                     print '  Current state:'
                     for group in notegroups:
@@ -503,7 +505,8 @@ for fname in args:
                         stream.Activate(base, base.ev.pitch + options.deviation * (mev.ev.pitch / float(0x2000)), parent=old)
                         found = True
             if not found:
-                print 'WARNING: Did not find any matching active streams for %r'%(mev,)
+                if not options.quiet:
+                    print 'WARNING: Did not find any matching active streams for %r'%(mev,)
                 if options.verbose:
                     print '  Current state:'
                     for group in notegroups:
@@ -521,7 +524,8 @@ for fname in args:
                         stream.Activate(base, stream.bentpitch, mev.mw, parent=old)
                         found = True
             if not found:
-                print 'WARNING: Did not find any matching active streams for %r'%(mev,)
+                if not options.quiet:
+                    print 'WARNING: Did not find any matching active streams for %r'%(mev,)
                 if options.verbose:
                     print '  Current state:'
                     for group in notegroups:

@@ -32,6 +32,7 @@ parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clam
 parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', help='Apply uniform random offsets (in MIDI pitch space)')
 parser.add_option('--vibrato', dest='vibrato', default=0.0, type='float', help='Apply periodic perturbances in pitch space by this amplitude (in MIDI pitches)')
 parser.add_option('--vibrato-freq', dest='vibrato_freq', default=6.0, type='float', help='Frequency of the vibrato perturbances in Hz')
+parser.add_option('--fmul', dest='fmul', default=1.0, type='float', help='Multiply requested frequencies by this amount')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
 parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the width of the bargraph pane (by default display width / 2)')
@@ -71,6 +72,9 @@ QUEUED_PCM = ''
 DRIFT_FACTOR = 1.0
 DRIFT_ERROR = 0.0
 LAST_SYN = None
+
+CUR_PERIODS = [0] * STREAMS
+CUR_PERIOD = 0.0
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
@@ -245,23 +249,41 @@ def square_wave(theta):
 def noise(theta):
     return random.random() * 2 - 1
 
-@generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>]]]])')
+@generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>[, <loop=(fraction to loop, 0.0 is all, 1.0 is end, or False to not loop)>[, <loopend=1.0>[, periods=1 (periods in wave file)/freq=None (base frequency)/pitch=None (base MIDI pitch)]]]]]]])')
 class file_samp(object):
     LINEAR = 0
     NEAREST = 1
     TYPES = {8: 'B', 16: 'H', 32: 'L'}
-    def __init__(self, fname, bits=8, signed=True, samp=LINEAR, swab=False):
+    def __init__(self, fname, bits=8, signed=True, samp=LINEAR, swab=False, loop=0.0, loopend=1.0, periods=1.0, freq=None, pitch=None):
         tp = self.TYPES[bits]
         if signed:
             tp = tp.lower()
         self.max = float((2 << bits) - 1)
+        if signed:
+            self.max /= 2.0
         self.buffer = array.array(tp)
         self.buffer.fromstring(open(fname, 'rb').read())
         if swab:
             self.buffer.byteswap()
         self.samp = samp
+        self.loop = loop
+        self.loopend = loopend
+        self.periods = periods
+        if pitch is not None:
+            freq = 440.0 * 2 ** ((pitch - 69) / 12.0)
+        if freq is not None:
+            self.periods = freq * len(self.buffer) / RATE
+        print 'file_samp periods:', self.periods, 'freq:', freq, 'pitch:', pitch
     def __call__(self, theta):
-        norm = theta / (2*math.pi)
+        full_norm = CUR_PERIOD / (2*self.periods*math.pi)
+        if full_norm > 1.0:
+            if self.loop is False:
+                return self.buffer[0]
+            else:
+                norm = (full_norm - 1.0) / (self.loopend - self.loop) % 1.0 * (self.loopend - self.loop) + self.loop
+        else:
+            norm = full_norm
+        norm %= 1.0
         if self.samp == self.LINEAR:
             v = norm*len(self.buffer)
             l = int(math.floor(v))
@@ -411,13 +433,14 @@ if options.numpy:
         return numpy.linspace(frm, to, cnt, dtype=numpy.int32)
 
     def samps(freq, amp, phase, cnt):
+        global CUR_PERIOD
         samps = numpy.ndarray((cnt,), numpy.int32)
         pvel = 2 * math.pi * freq / RATE
         fac = options.volume * amp / float(STREAMS)
         for i in xrange(cnt):
-            samps[i] = fac * max(-1, min(1, generator(phase)))
-            phase = (phase + pvel) % (2 * math.pi)
-        return samps, phase
+            samps[i] = fac * max(-1, min(1, generator((phase + i * pvel) % (2*math.pi))))
+            CUR_PERIOD += pvel
+        return samps, phase + pvel * cnt
 
     def to_data(samps):
         return samps.tobytes()
@@ -439,11 +462,13 @@ else:
         return samps
 
     def samps(freq, amp, phase, cnt):
-        global RATE
+        global RATE, CUR_PERIOD
         samps = [0]*cnt
         for i in xrange(cnt):
-            samps[i] = int(2*amp / float(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
-        return samps, (phase + 2 * math.pi * freq * cnt / RATE) % (2*math.pi)
+            samps[i] = int(amp / float(STREAMS) * max(-1, min(1, options.volume*generator((phase + 2 * math.pi * freq * i / RATE) % (2*math.pi)))))
+            CUR_PERIOD += 2 * math.pi * freq / RATE
+        next_phase = (phase + 2 * math.pi * freq * cnt / RATE)
+        return samps, next_phase
 
     def to_data(samps):
         return struct.pack('i'*len(samps), *samps)
@@ -468,7 +493,7 @@ else:
         return struct.pack(str(amt)+'i', *out)
 
 def gen_data(data, frames, tm, status):
-    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR
+    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR, CUR_PERIOD
     if len(QUEUED_PCM) >= frames*4:
         desired_frames = DRIFT_FACTOR * frames
         err_frames = desired_frames - int(desired_frames)
@@ -497,6 +522,7 @@ def gen_data(data, frames, tm, status):
         AMP = AMPS[i]
         EXPIRATION = EXPIRATIONS[i]
         PHASE = PHASES[i]
+        CUR_PERIOD = CUR_PERIODS[i]
         if FREQ != 0:
             if time.time() > EXPIRATION:
                 FREQ = 0
@@ -507,9 +533,11 @@ def gen_data(data, frames, tm, status):
                 fdata = mix(fdata, vdata)
                 LAST_SAMPS[i] = vdata[-1]
         else:
-            vdata, PHASE = samps(FREQ, AMP, PHASE, frames)
+            vdata, CUR_PERIOD = samps(FREQ, AMP, CUR_PERIOD, frames)
+            PHASE = (PHASE + CUR_PERIOD) % (2 * math.pi)
             fdata = mix(fdata, vdata)
             PHASES[i] = PHASE
+            CUR_PERIODS[i] = CUR_PERIOD
             LAST_SAMPS[i] = vdata[-1]
     if options.gui:
         LAST_SAMPLES.extend(fdata)
@@ -526,14 +554,17 @@ if options.gui:
 if options.test:
     FREQS[0] = 440
     EXPIRATIONS[0] = time.time() + 1
+    CUR_PERIODS[0] = 0.0
     time.sleep(1)
     FREQS[0] = 0
     time.sleep(1)
     FREQS[0] = 880
     EXPIRATIONS[0] = time.time() + 1
+    CUR_PERIODS[0] = 0.0
     time.sleep(1)
     FREQS[0] = 440
     EXPIRATIONS[0] = time.time() + 2
+    CUR_PERIODS[0] = 0.0
     time.sleep(2)
     exit()
 
@@ -567,12 +598,13 @@ while True:
     elif pkt.cmd == CMD.PLAY:
         voice = pkt.data[4]
         dur = pkt.data[0]+pkt.data[1]/1000000.0
-        freq = pkt.data[2]
+        freq = pkt.data[2] * options.fmul
         if options.chorus > 0:
             midi = 12 * math.log(freq / 440.0, 2) + 69
             midi += (random.random() * 2 - 1) * options.chorus
             freq = 440.0 * 2 ** ((midi - 69) / 12)
         FREQS[voice] = freq
+        CUR_PERIODS[voice] = 0.0
         amp = pkt.as_float(3)
         if options.clamp:
             amp = max(min(amp, 1.0), 0.0)
@@ -588,7 +620,7 @@ while True:
         if pkt.data[5] & PLF.SAMEPHASE:
             print '\x1b[1;37mSAMEPHASE',
         if pkt.data[0] == 0 and pkt.data[1] == 0:
-            print '\x1b[1;35mSTOP!!!'
+            print '\x1b[1;31mSTOP!!!'
         else:
             print '\x1b[1;36mDUR', '%08.6f'%dur
         #signal.setitimer(signal.ITIMER_REAL, dur)
