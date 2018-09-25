@@ -261,7 +261,7 @@ for num in xrange(options.tries):
 		s.sendto(str(Packet(CMD.QUIT)), cl)
         if options.silence:
             for i in xrange(pkt.data[0]):
-                s.sendto(str(Packet(CMD.PLAY, 0, 1, 1, 0.0, i)), cl)
+                s.sendto(str(Packet(CMD.PLAY, 0, 0, 0, 0.0, i)), cl)
         if pkt.data[0] == OBLIGATE_POLYPHONE:
             pkt.data[0] = 1
         for i in xrange(pkt.data[0]):
@@ -729,7 +729,11 @@ for fname in args:
                 spin_phase = 0
         if delta >= 0 and not options.spin:
             if tap_func is not None:
-                if delta >= options.tapper:
+                try:
+                    delta_on = factor * min(thr.next_t for thr in threads.values() if thr.next_t is not None and thr.next_t != thr.cur_offt)
+                except ValueError:
+                    delta_on = float('inf')
+                if delta_on >= options.tapper:
                     if options.verbose:
                         print 'TAP'
                     tap_func()

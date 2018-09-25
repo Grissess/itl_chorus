@@ -604,13 +604,13 @@ while True:
             midi += (random.random() * 2 - 1) * options.chorus
             freq = 440.0 * 2 ** ((midi - 69) / 12)
         FREQS[voice] = freq
-        CUR_PERIODS[voice] = 0.0
         amp = pkt.as_float(3)
         if options.clamp:
             amp = max(min(amp, 1.0), 0.0)
         AMPS[voice] = MAX * amp
         EXPIRATIONS[voice] = time.time() + dur
         if not (pkt.data[5] & PLF.SAMEPHASE):
+            CUR_PERIODS[voice] = 0.0
             PHASES[voice] = 0.0
         vrgb = [int(i*255) for i in colorsys.hls_to_rgb(float(voice) / STREAMS * 2.0 / 3.0, 0.5, 1.0)]
         frgb = rgb_for_freq_amp(pkt.data[2], pkt.as_float(3))
