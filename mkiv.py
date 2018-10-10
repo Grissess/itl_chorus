@@ -55,7 +55,9 @@ parser.add_option('--wav-window', dest='wav_window', type='int', help='Size of t
 parser.add_option('--wav-streams', dest='wav_streams', type='int', help='Number of output streams to generate for the interval file')
 parser.add_option('--wav-log-width', dest='wav_log_width', type='float', help='Width of the correcting exponent--positive prefers high frequencies, negative prefers lower')
 parser.add_option('--wav-log-base', dest='wav_log_base', type='float', help='Base of the logarithm used to scale low frequencies')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, real_slack=0.001, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0)
+parser.add_option('--compression', dest='compression', help='Type of compression to use')
+parser.add_option('--compressions', dest='compressions', action='store_true', help='List compressions that are supported')
+parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, real_slack=0.001, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0, compression='gzip')
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -110,6 +112,34 @@ Groups for which no streams are generated are not written to the resulting file.
 if not args:
     parser.print_usage()
     exit()
+
+COMPRESSIONS = {}
+def compression(name, desc='Not described.'):
+    def inner(f):
+        COMPRESSIONS[name] = (f, desc)
+    return inner
+
+@compression('none', 'No compression (default .iv format)')
+def comp_none(bn):
+    return open(bn + '.iv', 'wb')
+
+@compression('gzip', 'GZip compression')
+def comp_gzip(bn):
+    import gzip
+    return gzip.open(bn + '.ivz', 'wb')
+
+@compression('bz2', 'BZip2 compression')
+def comp_bz2(bn):
+    import bz2
+    return bz2.BZ2File(bn + '.ivb', 'w')
+
+if options.compressions:
+    for nm, tp in COMPRESSIONS.iteritems():
+        f, desc = tp
+        print(nm, ':', desc)
+    exit()
+
+opener = COMPRESSIONS[options.compression][0]
 
 if options.fuckit:
     import fuckit
@@ -818,6 +848,6 @@ for fname in args:
     ivapp = ET.SubElement(ivmeta, 'app')
     ivapp.text = 'mkiv'
 
-    print 'Done.'
+    print 'Done; writing with', options.compression, 'compression...'
     txt = ET.tostring(iv, 'UTF-8')
-    open(os.path.splitext(os.path.basename(fname))[0]+'.iv', 'wb').write(txt)
+    opener(os.path.splitext(os.path.basename(fname))[0]).write(txt)

@@ -456,7 +456,15 @@ for fname in args:
         print 'PCM: exit'
         continue
     try:
-        iv = ET.parse(fname).getroot()
+        if fname.endswith('.ivz'):
+            import gzip
+            ivf = gzip.open(fname, 'rb')
+        elif fname.endswith('.ivb'):
+            import bz2
+            ivf = bz2.BZ2File(fname, 'r')
+        else:
+            ivf = open(fname, 'rb')
+        iv = ET.parse(ivf).getroot()
     except IOError:
         import traceback
         traceback.print_exc()
