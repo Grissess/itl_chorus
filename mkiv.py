@@ -109,10 +109,6 @@ had been specified, again containing only the programs that were observed in the
 Groups for which no streams are generated are not written to the resulting file.'''
     exit()
 
-if not args:
-    parser.print_usage()
-    exit()
-
 COMPRESSIONS = {}
 def compression(name, desc='Not described.'):
     def inner(f):
@@ -123,12 +119,12 @@ def compression(name, desc='Not described.'):
 def comp_none(bn):
     return open(bn + '.iv', 'wb')
 
-@compression('gzip', 'GZip compression')
+@compression('gzip', 'GZip compression (.ivz format)')
 def comp_gzip(bn):
     import gzip
     return gzip.open(bn + '.ivz', 'wb')
 
-@compression('bz2', 'BZip2 compression')
+@compression('bz2', 'BZip2 compression (.ivb format)')
 def comp_bz2(bn):
     import bz2
     return bz2.BZ2File(bn + '.ivb', 'w')
@@ -136,7 +132,11 @@ def comp_bz2(bn):
 if options.compressions:
     for nm, tp in COMPRESSIONS.iteritems():
         f, desc = tp
-        print(nm, ':', desc)
+        print nm, ':', desc
+    exit()
+
+if not args:
+    parser.print_usage()
     exit()
 
 opener = COMPRESSIONS[options.compression][0]
