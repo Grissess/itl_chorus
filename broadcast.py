@@ -609,6 +609,16 @@ for fname in args:
                     i += 1
                     note = nsq.pop(0)
                     ttime = float(note.get('time'))
+                    if note.tag == 'art':
+                        val = float(note.get('value'))
+                        idx = int(note.get('index'))
+                        global_ = note.get('global') is not None
+                        if not options.dry:
+                            for cl in cls:
+                                s.sendto(str(Packet(CMD.ARTP, OBLIGATE_POLYPHONE if global_ else cl[2], idx, val)), cl[:2])
+                        if options.verbose:
+                            print (play_time() - BASETIME), cl, ': ARTP', cl[2], idx, val
+                        continue
                     pitch = float(note.get('pitch')) + options.transpose
                     ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                     dur = factor*float(note.get('dur'))
@@ -666,6 +676,16 @@ for fname in args:
                     nsq, cls = self._Thread__args
                     for note in nsq:
                             ttime = float(note.get('time'))
+                            if note.tag == 'art':
+                                val = float(note.get('value'))
+                                idx = int(note.get('index'))
+                                global_ = note.get('global') is not None
+                                if not options.dry:
+                                    for cl in cls:
+                                        s.sendto(str(Packet(CMD.ARTP, OBLIGATE_POLYPHONE if global_ else cl[2], idx, val)), cl[:2])
+                                if options.verbose:
+                                    print (play_time() - BASETIME), cl, ': ARTP', cl[2], idx, val
+                                continue
                             pitch = float(note.get('pitch')) + options.transpose
                             ampl = float(note.get('ampl', float(note.get('vel', 127.0)) / 127.0))
                             dur = factor*float(note.get('dur'))
@@ -697,7 +717,7 @@ for fname in args:
         for idx, ns in zip(xrange(number), nscycle):
             clis = routeset.Route(ns)
             for cli in clis:
-                nsq = ns.findall('note')
+                nsq = ns.findall('*')
                 nsq.sort(key=lambda x: float(x.get('time')))
                 if ns in threads:
                     threads[ns]._Thread__args[1].add(cli)
@@ -710,7 +730,7 @@ for fname in args:
             print thr._Thread__args[1]
 
     BASETIME = play_time() - (options.seek*factor)
-    ENDTIME = max(max(float(n.get('time')) + float(n.get('dur')) for n in thr._Thread__args[0]) for thr in threads.values())
+    ENDTIME = max(max(float(n.get('time', 0.0)) + float(n.get('dur', 0.0)) for n in thr._Thread__args[0]) for thr in threads.values())
     print 'Playtime is', ENDTIME
     if options.seek > 0:
         for thr in threads.values():

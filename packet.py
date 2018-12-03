@@ -26,6 +26,7 @@ class CMD:
         CAPS = 4 # ports, client type (1), user ident (2-7)
         PCM = 5 # 16 samples, encoded S16_LE
         PCMSYN = 6 # number of samples which should be buffered right now
+        ARTP = 7 # voice (or -1 = OBLIGATE_POLYPHONE for global), index, value(f32)
 
 class PLF:
         SAMEPHASE = 0x1

@@ -15,7 +15,7 @@ import threading
 import thread
 import colorsys
 
-from packet import Packet, CMD, PLF, stoi
+from packet import Packet, CMD, PLF, stoi, OBLIGATE_POLYPHONE
 
 parser = optparse.OptionParser()
 parser.add_option('-t', '--test', dest='test', action='store_true', help='Play a test sequence (440,<rest>,880,440), then exit')
@@ -33,6 +33,7 @@ parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', he
 parser.add_option('--vibrato', dest='vibrato', default=0.0, type='float', help='Apply periodic perturbances in pitch space by this amplitude (in MIDI pitches)')
 parser.add_option('--vibrato-freq', dest='vibrato_freq', default=6.0, type='float', help='Frequency of the vibrato perturbances in Hz')
 parser.add_option('--fmul', dest='fmul', default=1.0, type='float', help='Multiply requested frequencies by this amount')
+parser.add_option('--narts', dest='narts', default=64, type='int', help='Store this many articulation parameters for generator use (global is GARTS, voice-local is LARTS)')
 parser.add_option('--pg-fullscreen', dest='fullscreen', action='store_true', help='Use a full-screen video mode')
 parser.add_option('--pg-samp-width', dest='samp_width', type='int', help='Set the width of the sample pane (by default display width / 2)')
 parser.add_option('--pg-bgr-width', dest='bgr_width', type='int', help='Set the width of the bargraph pane (by default display width / 2)')
@@ -75,6 +76,10 @@ LAST_SYN = None
 
 CUR_PERIODS = [0] * STREAMS
 CUR_PERIOD = 0.0
+
+GARTS = [0.0] * options.narts
+VLARTS = [[0.0] * options.narts for i in xrange(STREAMS)]
+LARTS = None
 
 def lin_interp(frm, to, p):
     return p*to + (1-p)*frm
@@ -493,7 +498,7 @@ else:
         return struct.pack(str(amt)+'i', *out)
 
 def gen_data(data, frames, tm, status):
-    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR, CUR_PERIOD
+    global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR, CUR_PERIOD, LARTS
     if len(QUEUED_PCM) >= frames*4:
         desired_frames = DRIFT_FACTOR * frames
         err_frames = desired_frames - int(desired_frames)
@@ -523,6 +528,7 @@ def gen_data(data, frames, tm, status):
         EXPIRATION = EXPIRATIONS[i]
         PHASE = PHASES[i]
         CUR_PERIOD = CUR_PERIODS[i]
+        LARTS = VLARTS[i]
         if FREQ != 0:
             if time.time() > EXPIRATION:
                 FREQ = 0
@@ -652,5 +658,21 @@ while True:
                 DRIFT_FACTOR = 1.0 + float(bufnow - bufamt) / (bufamt * dfr * options.pcm_corr_rate)
                 print '\x1b[37m (DRIFT_FACTOR=%08.6f)'%(DRIFT_FACTOR,),
             print
+    elif pkt.cmd == CMD.ARTP:
+        print '\x1b[1;36mARTP',
+        if pkt.data[0] == OBLIGATE_POLYPHONE:
+            print '\x1b[1;31mGLOBAL',
+        else:
+            vrgb = [int(i*255) for i in colorsys.hls_to_rgb(float(pkt.data[0]) / STREAMS * 2.0 / 3.0, 0.5, 1.0)]
+            print '\x1b[1;38;2;{};{};{}mVOICE'.format(*vrgb), '{:03}'.format(pkt.data[0]),
+        print '\x1b[1;36mINDEX', pkt.data[1], '\x1b[1;37mVALUE', '%08.6f'%pkt.as_float(2),
+        if pkt.data[1] >= options.narts:
+            print '\x1b[1;31mOOB!!!',
+        else:
+            if pkt.data[0] == OBLIGATE_POLYPHONE:
+                GARTS[pkt.data[1]] = pkt.as_float(2)
+            else:
+                VLARTS[pkt.data[0]][pkt.data[1]] = pkt.as_float(2)
+        print
     else:
         print '\x1b[1;31mUnknown cmd', pkt.cmd

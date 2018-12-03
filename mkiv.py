@@ -23,6 +23,8 @@ parser.add_option('-c', '--preserve-channels', dest='chanskeep', action='store_t
 parser.add_option('-T', '--track-split', dest='tracks', action='append_const', const=TRACKS, help='Ensure all tracks are on non-mutual streams')
 parser.add_option('-t', '--track', dest='tracks', action='append', help='Reserve an exclusive set of streams for certain conditions (try --help-conds)')
 parser.add_option('--help-conds', dest='help_conds', action='store_true', help='Print help on filter conditions for streams')
+parser.add_option('-a', '--artp', dest='artp', action='append', help='Add articulation parameters to matching events (try --help-artp)')
+parser.add_option('--help-artp', dest='help_artp', action='store_true', help='Print help on articulation filters for events')
 parser.add_option('-p', '--program-split', dest='tracks', action='append_const', const=PROGRAMS, help='Ensure all programs are on non-mutual streams (overrides -T presently)')
 parser.add_option('-P', '--percussion', dest='perc', help='Which percussion standard to use to automatically filter to "perc" (GM, GM2, or none)')
 parser.add_option('-f', '--fuckit', dest='fuckit', action='store_true', help='Use the Python Error Steamroller when importing MIDIs (useful for extended formats)')
@@ -57,7 +59,7 @@ parser.add_option('--wav-log-width', dest='wav_log_width', type='float', help='W
 parser.add_option('--wav-log-base', dest='wav_log_base', type='float', help='Base of the logarithm used to scale low frequencies')
 parser.add_option('--compression', dest='compression', help='Type of compression to use')
 parser.add_option('--compressions', dest='compressions', action='store_true', help='List compressions that are supported')
-parser.set_defaults(tracks=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, real_slack=0.001, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0, compression='gzip')
+parser.set_defaults(tracks=[], artp=[], perc='GM', deviation=2, tempo='global', modres=0.005, modfdev=2.0, modffreq=8.0, modadev=0.5, modafreq=8.0, stringres=0, stringmax=1024, stringrateon=0.7, stringrateoff=0.4, stringthres=0.02, epsilon=1e-12, slack=0.0, real_slack=0.001, vol_pow=2, wav_winf='ones', wav_frames=512, wav_window=2048, wav_streams=16, wav_log_width=0.0, wav_log_base=2.0, compression='gzip')
 options, args = parser.parse_args()
 if options.tempo == 'f1':
     options.tempo == 'global'
@@ -107,6 +109,22 @@ had been specified in its place, though it is automatically sized to the number 
 had been specified, again containing only the programs that were observed in the piece.
 
 Groups for which no streams are generated are not written to the resulting file.'''
+    exit()
+
+if options.help_artp:
+    print '''Articulation filters are used to attach articulations to various events.
+
+An articulation filter is a pair idx:expr, where idx is an integer and expr is a Python expression compiled as the tail of "lambda ev: ". `ev` is a DurationEvents possessing all the properties of MergeEvent (see --help-conds), as well as:
+
+- ev.duration: the duration, in seconds, of the note, as considered by the scheduler (including slack);
+- ev.real_duration: the duration, in seconds, that this note will play on a client;
+- ev.pitch: the MIDI pitch after resolving various modulation events (fractional);
+- ev.modwheel: the value of the MIDI modwheel at the time of this event;
+- ev.ampl: the amplitude (0.0-1.0) of this event.
+
+Each filter is applied in the order encountered on the command line. The expression may return None (in which case no parameter change is attached), or a float value, which is inserted before the event in the notestream, or a singleton of (float,), which will cause a global articulation (GARTS vs. LARTS--see client.py).
+
+This section is TODO.'''
     exit()
 
 COMPRESSIONS = {}
@@ -784,6 +802,44 @@ for fname in args:
             else:
                 print 'ok'
 
+    print 'Applying articulation parameters...'
+    class Articulation(object):
+        __slots__ = ['tm', 'index', 'value', 'global_']
+        def __init__(self, tm, index, value, global_=False):
+            self.tm = tm
+            self.index = index
+            self.value = value
+            self.global_ = global_
+
+    for artpex in options.artp:
+        cnt = 0
+        idx, _, artfex = artpex.partition(':')
+        idx = int(idx)
+        artf = eval('lambda ev: '+artfex)
+        for group in notegroups:
+            for ns in group.streams:
+                i = 0
+                while i < len(ns.history):
+                    ev = ns.history[i]
+                    if ev.__class__ is Articulation:
+                        i += 1
+                        continue
+                    val = artf(ev)
+                    if val is not None:
+                        global_ = False
+                        try:
+                            val = val[0]
+                        except TypeError:
+                            pass
+                        else:
+                            global_ = True
+                        ns.history.insert(i, Articulation(ev.abstime, idx, val, global_))
+                        i += 2
+                        cnt += 1
+                    else:
+                        i += 1
+        print 'Articulation parameter', idx, 'attached to', cnt, 'events'
+
     print 'Generated %d streams in %d groups'%(sum(map(lambda x: len(x.streams), notegroups)), len(notegroups))
     print 'Playtime:', lastabstime, 'seconds'
 
@@ -812,14 +868,19 @@ for fname in args:
                     if group.name is not None:
                             ivns.set('group', group.name)
                     for note in ns.history:
-                            ivnote = ET.SubElement(ivns, 'note', id=str(id(note)))
-                            ivnote.set('pitch', str(note.pitch))
-                            ivnote.set('vel', str(int(note.ampl * 127.0)))
-                            ivnote.set('ampl', str(note.ampl))
-                            ivnote.set('time', str(note.abstime))
-                            ivnote.set('dur', str(note.real_duration + options.real_slack))
-                            if note.par:
-                                ivnote.set('par', str(id(note.par)))
+                        if note.__class__ is Articulation:
+                            ivart = ET.SubElement(ivns, 'art', time=str(note.tm), index=str(note.index), value=str(note.value))
+                            if note.global_:
+                                ivart.set('global', '1')
+                            continue
+                        ivnote = ET.SubElement(ivns, 'note', id=str(id(note)))
+                        ivnote.set('pitch', str(note.pitch))
+                        ivnote.set('vel', str(int(note.ampl * 127.0)))
+                        ivnote.set('ampl', str(note.ampl))
+                        ivnote.set('time', str(note.abstime))
+                        ivnote.set('dur', str(note.real_duration + options.real_slack))
+                        if note.par:
+                            ivnote.set('par', str(id(note.par)))
 
     if not options.no_text:
         ivtext = ET.SubElement(ivstreams, 'stream', type='text')
