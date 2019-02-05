@@ -254,6 +254,31 @@ def square_wave(theta):
 def noise(theta):
     return random.random() * 2 - 1
 
+@generator('Square generator with polynomial falloff')
+class sq_cub(object):
+    def __init__(self, mina, degree=1.0/3):
+        self.mina = mina
+        self.degree = degree
+    def __call__(self, theta):
+        if theta < math.pi:
+            return 1 - (1 - self.mina) * ((theta / math.pi) ** self.degree)
+        else:
+            return -1 + (1 - self.mina) * (((theta - math.pi) / math.pi) ** self.degree)
+
+@generator('Impulse-like square')
+class impulse(object):
+    def __init__(self, dc=0.01):
+        self.dc = dc
+    def __call__(self, theta):
+        if theta < self.dc * math.pi:
+            return 1
+        elif theta < math.pi:
+            return 0
+        elif theta < (1+self.dc) * math.pi:
+            return -1
+        else:
+            return 0
+
 @generator('File generator', '(<file>[, <bits=8>[, <signed=True>[, <0=linear interp (default), 1=nearest>[, <swapbytes=False>[, <loop=(fraction to loop, 0.0 is all, 1.0 is end, or False to not loop)>[, <loopend=1.0>[, periods=1 (periods in wave file)/freq=None (base frequency)/pitch=None (base MIDI pitch)]]]]]]])')
 class file_samp(object):
     LINEAR = 0

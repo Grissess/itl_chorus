@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import optparse
 import sys
 import math
+import gzip
+import bz2
 
 parser = optparse.OptionParser()
 parser.add_option('-n', '--number', dest='number', action='store_true', help='Show number of tracks')
@@ -122,7 +124,13 @@ for fname in args:
     print
     print 'File :', fname
     try:
-        iv = ET.parse(fname).getroot()
+        if fname.endswith('.ivz'):
+            ivf = gzip.open(fname, 'rb')
+        elif fname.endswith('.ivb'):
+            ivf = bz2.BZ2File(fname, 'r')
+        else:
+            ivf = open(fname, 'rb')
+        iv = ET.parse(ivf).getroot()
     except Exception:
         import traceback
         traceback.print_exc()

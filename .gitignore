@@ -7,4 +7,5 @@ client
 *.swo
 *.pyc
 *.mid
+*.wav
 *~

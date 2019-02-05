@@ -108,10 +108,11 @@ The specifier consists of a comma-separated list of attribute-colon-value pairs,
 
 GUIS = {}
 BASETIME = play_time()  # XXX fixes a race with the GUI
+factor = options.factor
 
 def gui_pygame():
     # XXX Racy, do this fast
-    global tap_func
+    global tap_func, BASETIME, factor
     key_cond = threading.Condition()
     if options.tapper is not None:
 
@@ -152,6 +153,8 @@ def gui_pygame():
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(pygame.font.get_default_font(), 24)
+    status = ('', 0.0)
+    DISP_TIME = 4.0
 
     print 'Pygame GUI initialized, running...'
 
@@ -169,6 +172,9 @@ def gui_pygame():
         tsurf = font.render('%0.3f' % ((play_time() - BASETIME) / factor,), True, (255, 255, 255), (0, 0, 0))
         disp.fill((0, 0, 0), tsurf.get_rect())
         disp.blit(tsurf, (0, 0))
+        if time.time() - DISP_TIME < status[1]:
+            ssurf = font.render(status[0], True, (0, 255, 0), (0, 0, 0))
+            disp.blit(ssurf, (0, tsurf.get_height()))
         pygame.display.flip()
 
         for ev in pygame.event.get():
@@ -179,12 +185,23 @@ def gui_pygame():
                     thread.interrupt_main()
                     pygame.quit()
                     exit()
+                elif ev.key == pygame.K_LEFT:
+                    BASETIME += 5
+                elif ev.key == pygame.K_RIGHT:
+                    BASETIME -= 5
+                elif ev.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
+                    pt = play_time()
+                    rtime = (pt - BASETIME) / factor
+                    if ev.key == pygame.K_LEFTBRACKET:
+                        factor /= 1.1
+                    elif ev.key == pygame.K_RIGHTBRACKET:
+                        factor *= 1.1
+                    BASETIME = pt - rtime * factor
+                    status = ('factor: ' + str(factor), time.time())
 
         clock.tick(60)
 
 GUIS['pygame'] = gui_pygame
-
-factor = options.factor
 
 print 'Factor:', factor
 
