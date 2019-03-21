@@ -613,18 +613,19 @@ while True:
         except socket.error:
             pass
     pkt = Packet.FromStr(data)
+    inds = [' ' if f == 0 else '\x1b[1;38;2;{};{};{}m|'.format(*rgb_for_freq_amp(f, a / MAX)) for f, a in zip(FREQS, AMPS)]
     if pkt.cmd != CMD.PCM:
         crgb = [int(i*255) for i in colorsys.hls_to_rgb((float(counter) / options.counter_modulus) % 1.0, 0.5, 1.0)]
         print '\x1b[38;2;{};{};{}m#'.format(*crgb),
         counter += 1
-        print '\x1b[mFrom', cli, 'command', pkt.cmd,
+        print '\x1b[m', cli, pkt.cmd,
     if pkt.cmd == CMD.KA:
-        print '\x1b[37mKA'
+        print '\x1b[37mKA', ' '.join(inds)
     elif pkt.cmd == CMD.PING:
         sock.sendto(data, cli)
-        print '\x1b[1;33mPING'
+        print '\x1b[1;33mPING', ' '.join(inds)
     elif pkt.cmd == CMD.QUIT:
-        print '\x1b[1;31mQUIT'
+        print '\x1b[1;31mQUIT', ' '.join(inds)
         break
     elif pkt.cmd == CMD.PLAY:
         voice = pkt.data[4]
@@ -648,6 +649,8 @@ while True:
         print '\x1b[1;32mPLAY',
         print '\x1b[1;38;2;{};{};{}mVOICE'.format(*vrgb), '{:03}'.format(voice),
         print '\x1b[1;38;2;{};{};{}mFREQ'.format(*frgb), '{:04}'.format(pkt.data[2]), 'AMP', '%08.6f'%pkt.as_float(3),
+        inds[voice] = '\x1b[1;38;2;{};{};{}m-'.format(*frgb)
+        print ' '.join(inds),
         if pkt.data[5] & PLF.SAMEPHASE:
             print '\x1b[1;37mSAMEPHASE',
         if pkt.data[0] == 0 and pkt.data[1] == 0:
@@ -662,7 +665,7 @@ while True:
         for i in xrange(len(UID)/4 + 1):
             data[i+2] = stoi(UID[4*i:4*(i+1)])
         sock.sendto(str(Packet(CMD.CAPS, *data)), cli)
-        print '\x1b[1;34mCAPS'
+        print '\x1b[1;34mCAPS', ' '.join(inds)
     elif pkt.cmd == CMD.PCM:
         fdata = data[4:]
         fdata = struct.pack('16i', *[i<<16 for i in struct.unpack('16h', fdata)])
