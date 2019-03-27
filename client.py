@@ -30,6 +30,7 @@ parser.add_option('-N', '--numpy', dest='numpy', action='store_true', help='Use 
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
 parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', help='Apply uniform random offsets (in MIDI pitch space)')
+parser.add_option('--amp-exp', dest='amp_exp', default=2.0, type='float', help='Raise floating amplitude to this power before computing raw amplitude')
 parser.add_option('--vibrato', dest='vibrato', default=0.0, type='float', help='Apply periodic perturbances in pitch space by this amplitude (in MIDI pitches)')
 parser.add_option('--vibrato-freq', dest='vibrato_freq', default=6.0, type='float', help='Frequency of the vibrato perturbances in Hz')
 parser.add_option('--fmul', dest='fmul', default=1.0, type='float', help='Multiply requested frequencies by this amount')
@@ -639,7 +640,7 @@ while True:
         amp = pkt.as_float(3)
         if options.clamp:
             amp = max(min(amp, 1.0), 0.0)
-        AMPS[voice] = MAX * amp
+        AMPS[voice] = MAX * amp**options.amp_exp
         EXPIRATIONS[voice] = time.time() + dur
         if not (pkt.data[5] & PLF.SAMEPHASE):
             CUR_PERIODS[voice] = 0.0

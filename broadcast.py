@@ -768,6 +768,11 @@ for fname in args:
             sys.stdout.write('\x1b[G\x1b[K[%s]' % (
                 ('#' * int((play_time() - BASETIME) * (columns - 2) / (ENDTIME * factor)) + SPINNERS[spin_phase]).ljust(columns - 2),
             ))
+            fmtime = '% 8.3f' % ((play_time() - BASETIME) / factor,)
+            sys.stdout.write('\x1b[%dG%s' % (
+                2 if play_time() - BASETIME > factor * ENDTIME / 2 else columns - len(fmtime) - 1,
+                fmtime,
+            ))
             sys.stdout.flush()
             spin_phase += 1
             if spin_phase >= len(SPINNERS):
