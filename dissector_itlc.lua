@@ -13,6 +13,10 @@ local fields = {
 	ident = ProtoField.new("Client ID", "itlc.ident", ftypes.STRING),
 	pcm = ProtoField.new("PCM Data", "itlc.pcm", ftypes.INT16),
 	data = ProtoField.new("Unknown Data", "itlc.data", ftypes.BYTES),
+	buffered = ProtoField.new("Buffered Samples", "itlc.buffered", ftypes.UINT32),
+	artp = ProtoField.new("Articulation Parameter", "itlc.artp", ftypes.UINT32),
+	value = ProtoField.new("Value", "itlc.value", ftypes.FLOAT),
+	isglobal = ProtoField.new("Global?", "itlc.global", ftypes.BOOLEAN),
 }
 
 local fieldarray = {}
@@ -26,6 +30,8 @@ local commands = {
 	[3] = "PLAY",
 	[4] = "CAPS",
 	[5] = "PCM",
+	[6] = "PCMSYN",
+	[7] = "ARTP",
 }
 setmetatable(commands, {__index = function(self, k) return "(Unknown command!)" end})
 
@@ -59,6 +65,26 @@ local subdis = {
 	end,
 	[5] = function(buffer, tree)
 		tree:add(fields.pcm, buffer())
+	end,
+	[6] = function(buffer, tree)
+		tree:add(fields.buffered, buffer(4, 4):uint())
+	end,
+	[7] = function(buffer, tree, pinfo)
+		local voice = buffer(4, 4):uint()
+		local glob = (voice == 0xffffffff)
+		tree:add(fields.port, voice)
+		tree:add(fields.isglobal, glob)
+		local artp = buffer(8, 4):uint()
+		local val = buffer(12, 4):float()
+		local fr = tree:add(fields.artp, artp)
+		if glob then
+			fr:append_text(" (Global)")
+			pinfo.cols.info = tostring(pinfo.cols.info) .. " GART(" .. artp .. ") = " .. val
+		else
+			fr:append_text(" (Local)")
+			pinfo.cols.info = tostring(pinfo.cols.info) .. " LART[" .. voice .. "](" .. artp .. ") = " .. val
+		end
+		tree:add(fields.value, val)
 	end,
 }
 setmetatable(subdis, {__index = function(self, k) return function(buffer, tree)

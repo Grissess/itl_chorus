@@ -14,6 +14,9 @@ import random
 import threading
 import thread
 import colorsys
+import mmap
+import os
+import atexit
 
 from packet import Packet, CMD, PLF, stoi, OBLIGATE_POLYPHONE
 
@@ -43,6 +46,9 @@ parser.add_option('--pg-no-colback', dest='no_colback', action='store_true', hel
 parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help='Low frequency for colored background')
 parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
 parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
+parser.add_option('--map-file', dest='map_file', default='client_map', help='File mapped by -G mapped (contains u32 frequency, f32 amplitude pairs for each voice)')
+parser.add_option('--map-interval', dest='map_interval', type='float', default=0.02, help='Period in seconds between refreshes of the map')
+parser.add_option('--map-samples', dest='map_samples', type='int', default=4096, help='Number of samples in the map file (MUST agree with renderer)')
 parser.add_option('--counter-modulus', dest='counter_modulus', type='int', default=16, help='Number of packet events in period of the terminal color scroll on the left margin')
 parser.add_option('--pcm-corr-rate', dest='pcm_corr_rate', type='float', default=0.05, help='Amount of time to correct buffer drift, measured as percentage of the current sync rate')
 
@@ -217,6 +223,38 @@ def pygame_notes():
                 exit()
 
         clock.tick(60)
+
+@GUI
+def mapped():
+    if os.path.exists(options.map_file):
+        raise ValueError('Refusing to map file--already exists!')
+    ms = options.map_samples
+    stm = options.map_interval
+    fixfmt = '>f'
+    fixfmtsz = struct.calcsize(fixfmt)
+    sigfmt = '>' + 'f' * ms
+    sigfmtsz = struct.calcsize(sigfmt)
+    strfmt = '>' + 'Lf' * STREAMS
+    strfmtsz = struct.calcsize(strfmt)
+    sz = sum((fixfmtsz, sigfmtsz, strfmtsz))
+    print 'Reserving', sz, 'in map file'
+    print 'Size triple:', fixfmtsz, sigfmtsz, strfmtsz
+    f = open(options.map_file, 'w+')
+    f.seek(sz - 1)
+    f.write('\0')
+    f.flush()
+    mapping = mmap.mmap(f.fileno(), sz, access=mmap.ACCESS_WRITE)
+    f.close()
+    atexit.register(os.unlink, options.map_file)
+    def unzip2(i):
+        for a, b in i:
+            yield a
+            yield b
+    while True:
+        mapping[:fixfmtsz] = struct.pack(fixfmt, (DRIFT_FACTOR - 1.0) if QUEUED_PCM else 0.0)
+        mapping[fixfmtsz:fixfmtsz+sigfmtsz] = struct.pack(sigfmt, *(float(LAST_SAMPLES[i])/MAX if i < len(LAST_SAMPLES) else 0.0 for i in xrange(ms)))
+        mapping[fixfmtsz+sigfmtsz:] = struct.pack(strfmt, *unzip2((FREQS[i], float(AMPS[i])/MAX) for i in xrange(STREAMS)))
+        time.sleep(stm)
 
 # Generator functions--should be cyclic within [0, 2*math.pi) and return [-1, 1]
 

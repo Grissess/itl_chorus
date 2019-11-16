@@ -211,6 +211,7 @@ except Exception:
     import traceback
     traceback.print_exc()
     rows, columns = 25, 80
+    print '---- Assuming default terminal size ----'
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
