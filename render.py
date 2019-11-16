@@ -117,7 +117,7 @@ while True:
     sampwin.fill((0, 0, 0), (0, 0, SAMP_WIDTH, HEIGHT))
     x = 0
     for i in LAST_SAMPLES:
-        sy = int(AMP * HALFH + HALFH)
+        sy = int(i * HALFH + HALFH)
         pygame.gfxdraw.line(sampwin, x - 1, lastsy, x, sy, (0, 255, 0))
         x += 1
         lastsy = sy
