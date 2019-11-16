@@ -7,6 +7,11 @@ import cStringIO as StringIO
 import array
 import time
 import colorsys
+import struct
+import mmap
+import threading
+import os
+import atexit
 
 from packet import Packet, CMD, stoi, OBLIGATE_POLYPHONE
 
@@ -18,6 +23,8 @@ parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='
 parser.add_option('-u', '--uid', dest='uid', default='', help='User identifier of this client')
 parser.add_option('-p', '--port', dest='port', default=13677, type='int', help='UDP port to listen on')
 parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
+parser.add_option('-B', '--bind', dest='bind_addr', default='', help='Bind to this address')
+parser.add_option('-G', '--gui', dest='gui', help='Use a GUI')
 parser.add_option('--amp-exp', dest='amp_exp', default=2.0, type='float', help='Raise floating amplitude to this power before computing raw amplitude')
 parser.add_option('--repeat', dest='repeat', action='store_true', help='If a note plays longer than a sample length, keep playing the sample')
 parser.add_option('--cut', dest='cut', action='store_true', help='If a note ends within a sample, stop playing that sample immediately')
@@ -25,6 +32,9 @@ parser.add_option('-n', '--max-voices', dest='max_voices', default=-1, type='int
 parser.add_option('--pg-low-freq', dest='low_freq', type='int', default=40, help='Low frequency for colored background')
 parser.add_option('--pg-high-freq', dest='high_freq', type='int', default=1500, help='High frequency for colored background')
 parser.add_option('--pg-log-base', dest='log_base', type='int', default=2, help='Logarithmic base for coloring (0 to make linear)')
+parser.add_option('--map-file', dest='map_file', default='client_map', help='File mapped by -G mapped (contains u32 frequency, f32 amplitude pairs for each voice)')
+parser.add_option('--map-interval', dest='map_interval', type='float', default=0.02, help='Period in seconds between refreshes of the map')
+parser.add_option('--map-samples', dest='map_samples', type='int', default=4096, help='Number of samples in the map file (MUST agree with renderer)')
 parser.add_option('--counter-modulus', dest='counter_modulus', type='int', default=16, help='Number of packet events in period of the terminal color scroll on the left margin')
 
 options, args = parser.parse_args()
@@ -32,6 +42,11 @@ options, args = parser.parse_args()
 MAX = 0x7fffffff
 MIN = -0x80000000
 IDENT = 'DRUM'
+
+LAST_SAMPLES = []
+FREQS = [0]
+AMPS = [0]
+STREAMS = 1
 
 if not args:
     print 'Need at least one drumpack (.tar.bz2) as an argument!'
@@ -48,6 +63,52 @@ def rgb_for_freq_amp(f, a):
             pass
     bgcol = colorsys.hls_to_rgb(min((1.0, max((0.0, pitchval)))), 0.5 * (a ** 2), 1.0)
     return [int(i*255) for i in bgcol]
+
+# GUIs
+
+GUIs = {}
+
+def GUI(f):
+    GUIs[f.__name__] = f
+    return f
+
+@GUI
+def mapped():
+    if os.path.exists(options.map_file):
+        raise ValueError('Refusing to map file--already exists!')
+    ms = options.map_samples
+    stm = options.map_interval
+    fixfmt = '>f'
+    fixfmtsz = struct.calcsize(fixfmt)
+    sigfmt = '>' + 'f' * ms
+    sigfmtsz = struct.calcsize(sigfmt)
+    strfmt = '>' + 'Lf' * STREAMS
+    strfmtsz = struct.calcsize(strfmt)
+    sz = sum((fixfmtsz, sigfmtsz, strfmtsz))
+    print 'Reserving', sz, 'in map file'
+    print 'Size triple:', fixfmtsz, sigfmtsz, strfmtsz
+    f = open(options.map_file, 'w+')
+    f.seek(sz - 1)
+    f.write('\0')
+    f.flush()
+    mapping = mmap.mmap(f.fileno(), sz, access=mmap.ACCESS_WRITE)
+    f.close()
+    atexit.register(os.unlink, options.map_file)
+    def unzip2(i):
+        for a, b in i:
+            yield a
+            yield b
+    while True:
+        mapping[:fixfmtsz] = struct.pack(fixfmt, 0.0)
+        mapping[fixfmtsz:fixfmtsz+sigfmtsz] = struct.pack(sigfmt, *(float(LAST_SAMPLES[i])/MAX if i < len(LAST_SAMPLES) else 0.0 for i in xrange(ms)))
+        mapping[fixfmtsz+sigfmtsz:] = struct.pack(strfmt, *unzip2((FREQS[i], AMPS[i]) for i in xrange(STREAMS)))
+        del LAST_SAMPLES[:]
+        time.sleep(stm)
+
+if options.gui:
+    guithread = threading.Thread(target=GUIs[options.gui])
+    guithread.setDaemon(True)
+    guithread.start()
 
 DRUMS = {}
 
@@ -131,6 +192,8 @@ def gen_data(data, frames, tm, status):
     for i in range(frames):
         fdata[i] = max(MIN, min(MAX, fdata[i]))
     fdata = array.array('i', fdata)
+    AMPS[0] = (float(sum(abs(i) for i in fdata)) / (len(fdata) * MAX))**0.25
+    LAST_SAMPLES.extend(fdata)
     return (fdata.tostring(), pyaudio.paContinue)
 
 pa = pyaudio.PyAudio()
@@ -141,6 +204,8 @@ if options.test:
         print 'Current playing:', PLAYING
         print 'Playing:', frq
         data = DRUMS[frq]
+        FREQS[0] = frq
+        AMPS[0] = 1.0
         PLAYING.append(SampleReader(data, len(data), options.volume))
         time.sleep(len(data) / (4.0 * options.rate))
     print 'Done'
@@ -148,7 +213,7 @@ if options.test:
 
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('', options.port))
+sock.bind((options.bind_addr, options.port))
 
 #signal.signal(signal.SIGALRM, sigalrm)
 
@@ -189,6 +254,8 @@ while True:
         amp = options.volume * pkt.as_float(3)
         if options.clamp:
             amp = max(min(amp, 1.0), 0.0)
+        FREQS[0] = frq
+        AMPS[0] = amp
         PLAYING.append(SampleReader(rdata, dframes * 4, amp**options.amp_exp))
         if options.max_voices >= 0:
             while len(PLAYING) > options.max_voices:

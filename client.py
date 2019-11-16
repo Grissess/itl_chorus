@@ -33,6 +33,7 @@ parser.add_option('-N', '--numpy', dest='numpy', action='store_true', help='Use 
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
 parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', help='Apply uniform random offsets (in MIDI pitch space)')
+parser.add_option('-B', '--bind', dest='bind_addr', default='', help='Bind to this address')
 parser.add_option('--amp-exp', dest='amp_exp', default=2.0, type='float', help='Raise floating amplitude to this power before computing raw amplitude')
 parser.add_option('--vibrato', dest='vibrato', default=0.0, type='float', help='Apply periodic perturbances in pitch space by this amplitude (in MIDI pitches)')
 parser.add_option('--vibrato-freq', dest='vibrato_freq', default=6.0, type='float', help='Frequency of the vibrato perturbances in Hz')
@@ -640,7 +641,7 @@ if options.test:
     exit()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('', PORT))
+sock.bind((options.bind_addr, PORT))
 
 #signal.signal(signal.SIGALRM, sigalrm)
 
