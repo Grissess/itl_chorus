@@ -141,4 +141,8 @@ while True:
             pygame.quit()
             exit()
 
+    if not os.path.exists(options.map_file):
+        pygame.quit()
+        exit()
+
     clock.tick(60)
