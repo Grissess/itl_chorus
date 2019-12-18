@@ -253,9 +253,9 @@ def mapped():
             yield b
     while True:
         mapping[:fixfmtsz] = struct.pack(fixfmt, (DRIFT_FACTOR - 1.0) if QUEUED_PCM else 0.0)
+        del LAST_SAMPLES[:-ms]
         mapping[fixfmtsz:fixfmtsz+sigfmtsz] = struct.pack(sigfmt, *(float(LAST_SAMPLES[i])/MAX if i < len(LAST_SAMPLES) else 0.0 for i in xrange(ms)))
         mapping[fixfmtsz+sigfmtsz:] = struct.pack(strfmt, *unzip2((FREQS[i], float(AMPS[i])/MAX) for i in xrange(STREAMS)))
-        del LAST_SAMPLES[:]
         time.sleep(stm)
 
 # Generator functions--should be cyclic within [0, 2*math.pi) and return [-1, 1]
