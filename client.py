@@ -30,6 +30,7 @@ parser.add_option('-r', '--rate', dest='rate', type='int', default=44100, help='
 parser.add_option('-V', '--volume', dest='volume', type='float', default=1.0, help='Set the volume factor (>1 distorts, <1 attenuates)')
 parser.add_option('-n', '--streams', dest='streams', type='int', default=1, help='Set the number of streams this client will play back')
 parser.add_option('-N', '--numpy', dest='numpy', action='store_true', help='Use numpy acceleration')
+parser.add_option('-L', '--lut', dest='lut', type='int', default=0, help='If >0, generate a Look-Up Table with this many samples')
 parser.add_option('-G', '--gui', dest='gui', default='', help='set a GUI to use')
 parser.add_option('-c', '--clamp', dest='clamp', action='store_true', help='Clamp over-the-wire amplitudes to 0.0-1.0')
 parser.add_option('-C', '--chorus', dest='chorus', default=0.0, type='float', help='Apply uniform random offsets (in MIDI pitch space)')
@@ -563,6 +564,86 @@ else:
                 out.append(arr[ieffidx] * (1-frac) + arr[ieffidx+1] * frac)
         return struct.pack(str(amt)+'i', *out)
 
+if options.lut > 0:
+    try:
+        rows, columns = map(int, os.popen('stty size', 'r').read().split())
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        rows, columns = 25, 80
+        print '---- Assuming default terminal size ----'
+
+    def plot_graph(yvs, height=None, width=None):
+        if height is None:
+            height = rows / 2
+        if width is None:
+            width = columns
+        miny, maxy = min(yvs), max(yvs)
+        nyvs = [height * (i - miny) / (maxy - miny) for i in yvs]
+        ptcols = []
+        lastidx = -1
+        for colnum in range(width):
+            idx = float(colnum) / width * (len(nyvs) - 1)
+            ipart = int(idx)
+            fpart = idx - ipart
+            if lastidx < ipart:
+                lastidx = ipart
+                ptcols.append(colnum)
+        for rownum in reversed(range(height + 1)):
+            for colnum in range(width):
+                idx = float(colnum) / width * (len(nyvs) - 1)
+                ipart = int(idx)
+                fpart = idx - ipart
+                if fpart == 0.0:
+                    samp = nyvs[ipart]
+                else:
+                    samp = lin_interp(nyvs[ipart], nyvs[ipart + 1], fpart)
+                if samp < rownum + 1 and samp >= rownum:
+                    if colnum in ptcols and len(nyvs) <= 32:
+                        lastidx = ipart
+                        char = 'x'
+                    else:
+                        lsamp = samp - rownum
+                        if 0 <= lsamp < 1.0/4:
+                            char = ','
+                        elif 1.0/4 <= lsamp < 2.0/4:
+                            char = '.'
+                        elif 2.0/4 <= lsamp < 3.0/4:
+                            char = '-'
+                        else:
+                            char = "'"
+                else:
+                    char = ' '
+                sys.stdout.write(char)
+            sys.stdout.write('\n')
+        nextcol = 0
+        curcol = 0
+        for idx, ptcol in enumerate(ptcols):
+            if ptcol < nextcol:
+                continue
+            spacing = ' ' * (ptcol - curcol)
+            s = spacing + str(idx) + ' '
+            curcol += len(s)
+            nextcol = curcol
+            sys.stdout.write(s)
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
+    SAMPLES = [
+        generator(float(i) / options.lut * 2 * math.pi)
+        for i in range(options.lut)
+    ]
+    print 'LUT:'
+    plot_graph(SAMPLES)
+
+    def generator(phase):
+        idx = phase / (2 * math.pi) * options.lut
+        ipart = int(idx)
+        fpart = idx - ipart
+        begin = SAMPLES[ipart]
+        end = SAMPLES[0 if ipart == options.lut - 1 else ipart + 1]
+        return lin_interp(begin, end, fpart)
+
 def gen_data(data, frames, tm, status):
     global FREQS, PHASE, Z_SAMP, LAST_SAMP, LAST_SAMPLES, QUEUED_PCM, DRIFT_FACTOR, DRIFT_ERROR, CUR_PERIOD, LARTS
     if len(QUEUED_PCM) >= frames*4:
@@ -670,6 +751,8 @@ while True:
         break
     elif pkt.cmd == CMD.PLAY:
         voice = pkt.data[4]
+        if voice >= STREAMS:
+            continue
         dur = pkt.data[0]+pkt.data[1]/1000000.0
         freq = pkt.data[2] * options.fmul
         if options.chorus > 0:

@@ -425,6 +425,10 @@ void main(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     while not glfw.window_should_close(win):
+        if not os.path.exists(options.map_file):
+            glfw.terminate()
+            exit()
+
         glfw.make_context_current(win)
         glClear(GL_COLOR_BUFFER_BIT)
 
