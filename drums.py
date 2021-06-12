@@ -248,7 +248,7 @@ while True:
         dur = pkt.data[0]+pkt.data[1]/1000000.0
         dframes = int(dur * options.rate)
         if not options.repeat:
-            dframes = max(dframes, rframes)
+            dframes = min(dframes, rframes)
         if not options.cut:
             dframes = rframes * ((dframes + rframes - 1) / rframes)
         amp = options.volume * pkt.as_float(3)
