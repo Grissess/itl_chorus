@@ -2,7 +2,7 @@
 
 # The map file format should look like the following C structure:
 # struct mapping {
-#   float disp_factor;  // scales the response to a note
+#   float disp_factor;  // a factor to be displayed onscreen
 #   float last_samples[MAP_SAMPLES];  // samples from the waveform being played
 #   struct {
 #     unsigned long frequency;
